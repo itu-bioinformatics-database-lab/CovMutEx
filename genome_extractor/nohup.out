@@ -1,0 +1,55 @@
+usage: gunicorn [OPTIONS] [APP_MODULE]
+gunicorn: error: ambiguous option: --worker could match --workers, --worker-class, --worker-connections, --worker-tmp-dir
+usage: gunicorn [OPTIONS] [APP_MODULE]
+gunicorn: error: ambiguous option: --worker could match --workers, --worker-class, --worker-connections, --worker-tmp-dir
+[2024-12-29 16:41:18 +0300] [1204489] [INFO] Starting gunicorn 23.0.0
+Traceback (most recent call last):
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/bin/gunicorn", line 10, in <module>
+    sys.exit(run())
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/wsgiapp.py", line 66, in run
+    WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/base.py", line 235, in run
+    super().run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/base.py", line 71, in run
+    Arbiter(self).run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/arbiter.py", line 197, in run
+    self.start()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/arbiter.py", line 154, in start
+    self.LISTENERS = sock.create_sockets(self.cfg, self.log, fds)
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/sock.py", line 165, in create_sockets
+    raise ValueError('keyfile "%s" does not exist' % conf.keyfile)
+ValueError: keyfile "/path/to/your/key.pem" does not exist
+[2024-12-29 16:45:50 +0300] [1206817] [INFO] Starting gunicorn 23.0.0
+Traceback (most recent call last):
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/bin/gunicorn", line 10, in <module>
+    sys.exit(run())
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/wsgiapp.py", line 66, in run
+    WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/base.py", line 235, in run
+    super().run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/base.py", line 71, in run
+    Arbiter(self).run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/arbiter.py", line 197, in run
+    self.start()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/arbiter.py", line 154, in start
+    self.LISTENERS = sock.create_sockets(self.cfg, self.log, fds)
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/sock.py", line 165, in create_sockets
+    raise ValueError('keyfile "%s" does not exist' % conf.keyfile)
+ValueError: keyfile "/path/to/your/key.pem" does not exist
+[2024-12-29 16:53:01 +0300] [1210270] [INFO] Starting gunicorn 23.0.0
+Traceback (most recent call last):
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/bin/gunicorn", line 10, in <module>
+    sys.exit(run())
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/wsgiapp.py", line 66, in run
+    WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/base.py", line 235, in run
+    super().run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/app/base.py", line 71, in run
+    Arbiter(self).run()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/arbiter.py", line 197, in run
+    self.start()
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/arbiter.py", line 154, in start
+    self.LISTENERS = sock.create_sockets(self.cfg, self.log, fds)
+  File "/home/bioinformatics/COVID19 MUTATION/genome_extractor/myvenv/lib/python3.10/site-packages/gunicorn/sock.py", line 165, in create_sockets
+    raise ValueError('keyfile "%s" does not exist' % conf.keyfile)
+ValueError: keyfile "/usr/lib/ssl/key.pem" does not exist
