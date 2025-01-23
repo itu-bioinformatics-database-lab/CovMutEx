@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.App {
+	background-color: #f5f7f8; /* Light grey background for the whole app */
+	font-family: "Arial", sans-serif; /* Consistent font */
+}
+.navbar {
+	margin: 10px;
+	padding: 15px;
+	border-radius: 5px;
+	background-color: white;
+	border: 1px solid #e1e1e1;
+	box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1);
+}
+.chart-container {
+	background-color: #f6f7f9;
+	/* border: 1px solid #e1e1e1; */
+	/* box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1); */
+	margin: 10px;
+	margin-right: 0;
+	padding: 15px;
+	/* padding-right: 0; */
+	border-radius: 5px;
+}
+
+.progressbar {
+	position: relative;
+	overflow: hidden;
+	width: 350px;
+	height: 35px;
+	border-radius: 5px;
+	background-color: #eee;
+}
+
+.zoom-container {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+.zoom-slider {
+	writing-mode: bt-lr; /* IE */
+	-webkit-appearance: slider-vertical; /* WebKit */
+	width: 8px;
+	height: 300px; /* Adjust as needed */
+	margin: 10px 0;
+}
+
+.zoom-button {
+	background-color: #f1f1f1;
+	border: none;
+	border-radius: 2px;
+	cursor: pointer;
+	padding: 5px 10px;
+	margin: 2px;
+	font-size: 20px;
+}
+/* App.css */
+.input-placeholder {
+	font-size: 14px; /* Your desired font size */
+	color: "#BDC3D4";
+}
+
+.container {
+	display: flex;
+}
+
+.side-panel {
+	width: 20vw;
+	height: 80vh;
+	background-color: #f0f0f0;
+	padding: 16px;
+	overflow-y: auto; /* In case of many protein regions */
+}
+
+.side-panel h3 {
+	margin-bottom: 8px;
+}
+
+.side-panel ul {
+	list-style: none;
+	padding: 0;
+}
+
+.side-panel li {
+	margin-bottom: 4px;
+}
+
+.custom-switch {
+  /* Adjust width and height */
+  position: relative;
+  margin-left: 0;
+
+}
+
+/* Customize the active state */
+.custom-switch .active {
+  background-color: #3b82f6; /* Color when switched on */
+}
+
+/* Add transition effects */
+.custom-switch {
+  transition: background-color 0.3s ease;
+}
+
