@@ -14,16 +14,52 @@ import Nav from "./Nav";
 
 Chart.register(annotationPlugin, zoomPlugin);
 
+let chunkView = true;
+
 const GenomeChart = ({ genomeData, genomeSequence }) => {
   const chartRef = useRef(null);
+
   const [activeProtein, setActiveProtein] = useState(null);
   const [showFullAnnotation, setShowFullAnnotation] = useState(false);
   const [hoveredPosition, setHoveredPosition] = useState(null);
+
   const selectedProteinRegion = useSelector(
     (state) => state.genome.selectedProteinRegion
   );
+  const [zoomLevel, setZoomLevel] = useState(selectedProteinRegion ? 1 : 25);
   const genomeState = useSelector((state) => state.genome);
-  const decimateFactor = 30;
+  const zoomThreshold = 1000;
+  let [decimateFactor, setDecimateFcator] = useState(
+    selectedProteinRegion || zoomLevel >= zoomThreshold ? 1 : 25
+  );
+
+  decimateFactor = 25;
+  useEffect(() => {
+    if (selectedProteinRegion) {
+      setDecimateFcator(1); // Use full-resolution data for protein regions
+      console.log("PR SELECTED DECIMATED DATA", decimateFactor);
+    } else if (zoomLevel >= zoomThreshold) {
+      setDecimateFcator(1); // Full-resolution data for high zoom levels
+    } else {
+      setDecimateFcator(25); // Decimated data for lower zoom levels
+    }
+  }, [selectedProteinRegion, zoomLevel]);
+
+  // console.log(selectedProteinRegion, "ADFFFFFFFFFFFFs");
+  // console.log(zoomLevel >= zoomThreshold);
+  // console.log(zoomLevel, "ZOOOMMMM");
+  // console.log("Decimate Factor", decimateFactor);
+  // console.log(genomeSequence[29042], "29028 position");
+  let currentDecimateFactor =
+    selectedProteinRegion && proteinRegions[selectedProteinRegion]
+      ? selectedProteinRegion === "ORF1ab"
+        ? zoomLevel >= zoomThreshold
+          ? 1
+          : 25
+        : 1
+      : zoomLevel >= zoomThreshold
+      ? 1
+      : decimateFactor;
 
   const decimatedData = useMemo(() => {
     if (!genomeData || genomeData.length === 0) return [];
@@ -106,6 +142,8 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     return [];
   };
 
+  console.log("current decimatefactor is this: ", currentDecimateFactor);
+
   useEffect(() => {
     const ctx = chartRef.current?.getContext("2d");
     if (!ctx) return;
@@ -117,6 +155,9 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
 
     let startPosition = 0;
     let endPosition = 30000;
+    // Define your zoom threshold
+
+    // let currentDecimateFactor = selectedProteinRegion ? 1 : decimateFactor;
 
     if (selectedProteinRegion && proteinRegions[selectedProteinRegion]) {
       [startPosition, endPosition] = proteinRegions[selectedProteinRegion]
@@ -125,9 +166,13 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     }
 
     const decimatedLabels = Array.from(
-      { length: Math.ceil((endPosition - startPosition) / decimateFactor) },
+      {
+        length: Math.ceil(
+          (endPosition - startPosition) / currentDecimateFactor
+        ),
+      },
       (_, idx) => {
-        const position = startPosition + idx * decimateFactor;
+        const position = startPosition + idx * currentDecimateFactor;
         const nucleotide = genomeSequence[position] || "N";
         return `${position}-${nucleotide}`;
       }
@@ -139,7 +184,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
       .map(() => []);
 
     decimatedLabels.forEach((_, idx) => {
-      const position = startPosition + idx * decimateFactor;
+      const position = startPosition + 1 + idx * currentDecimateFactor;
       const refNucleotide = genomeSequence[position] || "N";
       const refIndex = nucleotides.indexOf(refNucleotide);
 
@@ -163,6 +208,23 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
       });
     });
 
+    // console.log("genomeData before fetch:", genomeData);
+    // const fetchData = (min, max) => {
+    //   if (!genomeData || genomeData.length === 0) {
+    //     console.log("Empty genomeData detected");
+    //     return []; // Handle empty data case
+    //   }
+
+    //   return genomeData.map((dataset, idx) => {
+    //     const slicedData = dataset.slice(min, max);
+    //     console.log(`Dataset ${idx}:`, slicedData);
+    //     if (!slicedData.length) {
+    //       return { label: nucleotides[idx], data: Array(max - min).fill(0) };
+    //     }
+    //     return { label: nucleotides[idx], data: slicedData };
+    //   });
+    // };
+
     const data = {
       labels: decimatedLabels,
       datasets: [
@@ -171,27 +233,31 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
           data: noMutationData,
           backgroundColor: "rgba(128, 128, 128, 0.8)",
           borderColor: "rgba(128, 128, 128, 1)",
-          maxBarThickness: 20,
+          maxBarThickness: 30,
         },
         ...nucleotides.map((nuc, idx) => ({
           label: `${nuc}`,
           data: mutationData[idx],
           backgroundColor: getColorForNucleotide(nuc),
           borderColor: getColorForNucleotide(nuc),
-          maxBarThickness: 20,
+          maxBarThickness: 30,
         })),
       ],
     };
 
     const options = {
-      animation: true,
+      animation: false,
       responsive: true,
       maintainAspectRatio: false,
       scales: {
         x: {
           stacked: true,
           min: 0, // Always start from the beginning of the genome
-          max: 30000, // Always end at the full genome range
+          max: 30000,
+          bar: {
+            categoryPercentage: 1.0,
+            barPercentage: 1.0,
+          },
         },
         y: {
           stacked: true,
@@ -203,47 +269,275 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
         tooltip: {
           callbacks: {
             title: function (tooltipItems) {
-              const idx = tooltipItems[0].dataIndex;
-              const position = startPosition + idx * decimateFactor;
-              const nucleotide = genomeSequence[position] || "N";
+              if (!tooltipItems?.length) return ""; // No tooltip items at all
 
-              if (selectedProteinRegion) {
-                return `${selectedProteinRegion} Position ${position} (Reference: ${nucleotide})`;
-              }
-              return `Position ${position} (Reference: ${nucleotide})`;
+              const tooltipItem = tooltipItems[0];
+              const chart = tooltipItem.chart;
+
+              // Safely get the label for the hovered data point
+              const label = chart.data.labels?.[tooltipItem.dataIndex];
+              // If label is missing/undefined/null, return empty to avoid errors
+              if (!label) return "";
+
+              return label; // or a fallback like "Unknown position" if you prefer
             },
             label: function (tooltipItem) {
-              const idx = tooltipItem.dataIndex;
-              const position = startPosition + idx * decimateFactor;
-              const refNucleotide = genomeSequence[position] || "N";
+              const chart = tooltipItem.chart;
 
-              if (tooltipItem.dataset.label === "No Mutation") {
-                return `No mutation (${refNucleotide} → ${refNucleotide}): ${tooltipItem.raw.toFixed(
+              // Safely get the label
+              const positionLabel = chart.data.labels?.[tooltipItem.dataIndex];
+              if (!positionLabel) {
+                // If we don't have a valid label, return empty to avoid the error
+                return "";
+              }
+
+              // Extract position from the label (e.g., "1000-A")
+              const positionStr = positionLabel.split("-")[0];
+              const position = parseInt(positionStr, 10);
+              // If parse fails or position is NaN, just return empty
+              if (isNaN(position)) {
+                return "";
+              }
+
+              const refNucleotide = genomeSequence?.[position] || "N";
+
+              const datasetLabel = tooltipItem.dataset?.label;
+              const value = tooltipItem.raw;
+
+              // If for some reason raw is missing, just return empty
+              if (value == null) return "";
+
+              // Now build the tooltip text
+              if (datasetLabel === "No Mutation") {
+                return `No mutation (${refNucleotide} → ${refNucleotide}): ${value.toFixed(
                   3
                 )}`;
               } else {
-                const mutatedNucleotide = tooltipItem.dataset.label;
-                return `Mutation (${refNucleotide} → ${mutatedNucleotide}): ${tooltipItem.raw.toFixed(
+                const mutatedNucleotide = datasetLabel || "Unknown";
+                return `Mutation (${refNucleotide} → ${mutatedNucleotide}): ${value.toFixed(
                   3
                 )}`;
               }
             },
           },
         },
+
         zoom: {
           zoom: {
             wheel: { enabled: true },
             pinch: { enabled: true },
             mode: "x",
+            onZoomComplete: ({ chart }) => {
+              try {
+                if (!chart || !chart.scales || !chart.scales.x) {
+                  console.error("Chart or scales are not ready yet");
+                  return;
+                }
+                const scales = chart.scales?.x || {};
+                const min = scales.min ?? 1;
+                const max = scales.max ?? 30000;
+                const zoomLevel = Math.round(chart.getZoomLevel());
+                console.log("scales", scales);
+                if (isNaN(zoomLevel) || zoomLevel < 1) {
+                  console.error("Invalid zoom level:", zoomLevel);
+                  return; // Avoid further processing on invalid zoom levels
+                }
+
+                setZoomLevel(zoomLevel);
+
+                console.log(`ZOOM-LEVEL: ${zoomLevel}`);
+
+                // console.log(
+                //   `Zoom Range : ${zoomLevel}, Min: ${min} - Max- ${max}`
+                // );
+                let startPos, endPos;
+                if (
+                  selectedProteinRegion &&
+                  proteinRegions[selectedProteinRegion]
+                ) {
+                  [startPos, endPos] = proteinRegions[selectedProteinRegion]
+                    .split("-")
+                    .map(Number);
+                } else {
+                  startPos = Math.max(
+                    0,
+                    Math.floor(min * currentDecimateFactor)
+                  );
+                  endPos = Math.min(
+                    genomeSequence.length,
+                    Math.floor((max + 100) * currentDecimateFactor)
+                  );
+                }
+                startPos = Math.max(0, Math.floor(startPos));
+                endPos = Math.min(genomeSequence.length, Math.ceil(endPos));
+                // Function to generate chart datasets to avoid repetition
+                const generateChartDatasets = (
+                  noMutationData,
+                  mutationData,
+                  nucleotides
+                ) => [
+                  {
+                    label: "No Mutation",
+                    data: noMutationData,
+                    backgroundColor: "rgba(128, 128, 128, 0.8)",
+                    borderColor: "rgba(128, 128, 128, 1)",
+                  },
+                  ...nucleotides.map((nuc, idx) => ({
+                    label: `${nuc}`,
+                    data: mutationData[idx],
+                    backgroundColor: getColorForNucleotide(nuc),
+                    borderColor: getColorForNucleotide(nuc),
+                  })),
+                ];
+
+                // Function to calculate mutation data
+                const calculateMutationData = (
+                  fullResolutionData,
+                  nucleotides
+                ) =>
+                  nucleotides.map((nuc, nucIdx) =>
+                    fullResolutionData[nucIdx].map((value) => value ?? 0)
+                  );
+
+                // Function to calculate no mutation data
+                const calculateNoMutationData = (
+                  fullResolutionData,
+                  genomeSequence,
+                  startPos
+                ) =>
+                  fullResolutionData[0].map((_, posIdx) => {
+                    const refNucleotide =
+                      genomeSequence[startPos + posIdx] ?? "N";
+                    const refIndex = nucleotides.indexOf(refNucleotide);
+                    return fullResolutionData[refIndex][posIdx] ?? 0;
+                  });
+
+                // Main zoom handling logic
+                if (
+                  zoomLevel >= zoomThreshold &&
+                  selectedProteinRegion === null
+                ) {
+                  chunkView = false;
+
+                  // Update full-resolution view
+                  const fullResolutionData = genomeData.map((dataset) =>
+                    dataset.slice(startPos, endPos)
+                  );
+
+                  const fullResolutionLabels = Array.from(
+                    { length: fullResolutionData[0].length },
+                    (_, idx) => {
+                      const position = Math.floor(
+                        scales.min * currentDecimateFactor + idx
+                      );
+                      const nucleotide = genomeSequence[position] || "N";
+                      return `${position}-${nucleotide}`;
+                    }
+                  );
+
+                  const fullResolutionMutationData = calculateMutationData(
+                    fullResolutionData,
+                    nucleotides
+                  );
+                  const fullResolutionNoMutationData = calculateNoMutationData(
+                    fullResolutionData,
+                    genomeSequence,
+                    startPos
+                  );
+
+                  chart.data.labels = fullResolutionLabels;
+                  chart.data.datasets = generateChartDatasets(
+                    fullResolutionNoMutationData,
+                    fullResolutionMutationData,
+                    nucleotides
+                  );
+
+                  chart.update();
+                } else if (
+                  zoomLevel >= zoomThreshold &&
+                  proteinRegions[selectedProteinRegion] &&
+                  selectedProteinRegion === "ORF1ab"
+                ) {
+                  chunkView = false;
+
+                  // Handle ORF1ab specific view
+                  const fullResolutionData = genomeData.map((dataset) =>
+                    dataset.slice(startPos, endPos)
+                  );
+
+                  const fullResolutionLabels = Array.from(
+                    { length: fullResolutionData[0].length },
+                    (_, idx) => {
+                      const position = Math.floor(
+                        scales.min * currentDecimateFactor + idx
+                      );
+                      const nucleotide = genomeSequence[position] || "N";
+                      return `${position}-${nucleotide}`;
+                    }
+                  );
+
+                  const fullResolutionMutationData = calculateMutationData(
+                    fullResolutionData,
+                    nucleotides
+                  );
+                  const fullResolutionNoMutationData = calculateNoMutationData(
+                    fullResolutionData,
+                    genomeSequence,
+                    startPos
+                  );
+
+                  chart.data.labels = fullResolutionLabels;
+                  chart.data.datasets = generateChartDatasets(
+                    fullResolutionNoMutationData,
+                    fullResolutionMutationData,
+                    nucleotides
+                  );
+
+                  chart.update();
+                }
+
+                // Single update call outside the conditions
+                else {
+                  chunkView = true;
+
+                  // Update decimated view
+                  chart.data.labels = decimatedLabels;
+                  chart.data.datasets = [
+                    {
+                      label: "No Mutation",
+                      data: noMutationData,
+                      backgroundColor: "rgba(128, 128, 128, 0.8)",
+                      borderColor: "rgba(128, 128, 128, 1)",
+                    },
+                    ...nucleotides.map((nuc, idx) => ({
+                      label: `${nuc}`,
+                      data: mutationData[idx],
+                      backgroundColor: getColorForNucleotide(nuc),
+                      borderColor: getColorForNucleotide(nuc),
+                    })),
+                  ];
+
+                  chart.update();
+                }
+              } catch (error) {
+                console.error("Error during zoom handling:", error);
+                console.error("Detailed Zoom Handling Error:", error);
+                console.error("Error Name:", error.name);
+                console.error("Error Message:", error.message);
+                console.error("Error Stack:", error.stack);
+              }
+            },
           },
           pan: {
             enabled: true,
             mode: "x",
+            threshold: 15,
           },
           limits: {
-            x: { min: 0, max: 30000 },
+            x: { min: 30, max: 300000 + 100, minRange: 25, maxRange: 65000 },
           },
         },
+
         annotation: {
           annotations: createAnnotations(),
         },
@@ -258,7 +552,6 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
 
     chartRef.current.chartInstance = chartInstance;
 
-    // Reset zoom explicitly to the default range
     chartInstance.resetZoom();
 
     return () => {
