@@ -1,0 +1,33 @@
+*.h5
+*.csv
+*.zip
+*.h5
+*.csv
+*.zip
+*.so
+*.dll
+*.pyd
+venv/
+genome_extractor/venv/
+genome_extractor/venv/
+genome_extractor/venv/
+*.so*
+__pycache__/
+*.pyc
+# LFS files to ignore
+genome_extractor/venv/lib/python3.11/site-packages/tensorflow/*.so
+genome_extractor/genome/prediction_results.json
+genome_extractor/node_modules/
+genome_extractor/package*.json
+env/
+myvenv/
+
+# General ignores
+*.so
+*.json
+genome_extractor/covid19_models/models/
+genome_extractor/models/
+genome_extractor/staticfiles/
+*.mp4
+covid19-genome-visualizer/src/CovMutExVideo.mp4
+*.mp4
