@@ -175,7 +175,7 @@ def handle_prediction(request):
             
             # Try alternative extensions if .keras not found
             if not os.path.exists(model_path):
-                for ext in ['.h5', '.pb']:
+                for ext in ['.h5', '.pb', '.pt', '.pth']:
                     alt_path = os.path.join(model_directory, f"{selectedModel}{ext}")
                     if os.path.exists(alt_path):
                         model_path = alt_path

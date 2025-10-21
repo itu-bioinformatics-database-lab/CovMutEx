@@ -10,6 +10,14 @@ import numpy as np
 import tensorflow as tf
 from typing import Protocol, Any, runtime_checkable, Optional
 
+# Try to import PyTorch (optional dependency)
+try:
+    import torch
+    PYTORCH_AVAILABLE = True
+except ImportError:
+    PYTORCH_AVAILABLE = False
+    torch = None
+
 
 @runtime_checkable
 class CovMutExModel(Protocol):
@@ -241,40 +249,245 @@ class CovMutExKerasModel:
         }
 
 
+class CovMutExPyTorchModel:
+    """
+    PyTorch implementation of CovMutExModel Protocol.
+    
+    Supports PyTorch models (.pt, .pth files) for COVID-19 mutation prediction.
+    """
+    
+    def __init__(self, model_path: str, model_name: str = None, description: str = None, source: str = "server"):
+        """
+        Initialize with a PyTorch model.
+        
+        Args:
+            model_path: Path to the .pt or .pth model file
+            model_name: Optional custom name for the model
+            description: Optional description of the model
+            source: Source of the model - "server", "uploaded", or "registry"
+        """
+        if not PYTORCH_AVAILABLE:
+            raise ImportError("PyTorch is not installed. Install with: pip install torch")
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        
+        self.model_path = model_path
+        self.model_name = model_name or os.path.basename(model_path).replace('.pt', '').replace('.pth', '')
+        self.description = description or "COVID-19 mutation prediction model (PyTorch)"
+        self.source = source
+        
+        # Load PyTorch model
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.torch_model = torch.load(model_path, map_location=self.device)
+        
+        # Set to evaluation mode
+        if hasattr(self.torch_model, 'eval'):
+            self.torch_model.eval()
+        
+        # Detect input/output shapes (try to infer from model)
+        self._detect_model_properties()
+    
+    def _detect_model_properties(self):
+        """Detect model properties by doing a test inference."""
+        try:
+            # Create dummy input to detect shapes
+            dummy_input = torch.randn(1, 205, device=self.device)
+            
+            with torch.no_grad():
+                dummy_output = self.torch_model(dummy_input)
+            
+            # Detect if multi-input (this is a simplification)
+            self._is_multi_input = False  # PyTorch models typically don't use multi-input like Keras
+            
+            # Detect output type
+            output_dim = dummy_output.shape[-1] if len(dummy_output.shape) > 1 else 1
+            if output_dim == 1:
+                self._output_type = "single-output"
+            elif output_dim == 2:
+                self._output_type = "dual-output"
+            else:
+                self._output_type = "multi-class"
+            
+            self._input_shape = f"(None, 205)"
+            self._output_shape = f"(None, {output_dim})"
+            
+        except Exception as e:
+            print(f"Warning: Could not auto-detect model properties: {e}")
+            self._is_multi_input = False
+            self._output_type = "unknown"
+            self._input_shape = "(None, 205)"
+            self._output_shape = "(None, ?)"
+    
+    def metadata(self) -> dict:
+        """Return model metadata."""
+        return {
+            "name": self.model_name,
+            "description": self.description,
+            "version": "1.0",
+            "model_type": "multi-input" if self._is_multi_input else "single-input",
+            "output_type": self._output_type,
+            "input_shape": self._input_shape,
+            "output_shape": self._output_shape,
+            "is_multi_input": self._is_multi_input,
+            "framework": "pytorch",
+            "source": self.source,
+            "device": str(self.device)
+        }
+    
+    def input_schema(self) -> dict:
+        """Define expected input schema."""
+        return {
+            "required": {
+                "features": "numpy array of shape (N, 205) - genomic features"
+            },
+            "optional": {
+                "genome_id": "string - variant identifier (e.g., 'hCoV-19/USA/CA-123')",
+                "elapsed_days": "int - days since reference date",
+                "region": "tuple (start, end) - genomic region to analyze"
+            },
+            "notes": f"This model is a PyTorch model running on {self.device}"
+        }
+    
+    def preprocess(self, inputs: dict) -> Any:
+        """
+        Preprocess inputs for PyTorch model.
+        
+        Args:
+            inputs: dict with 'features' (required) and optional metadata
+            
+        Returns:
+            PyTorch tensor ready for inference
+        """
+        features = inputs.get('features')
+        if features is None:
+            raise ValueError("'features' key is required in inputs dict")
+        
+        # Convert to numpy if not already
+        if not isinstance(features, np.ndarray):
+            features = np.array(features)
+        
+        # Clean extra dimensions
+        if features.ndim > 2:
+            features = np.squeeze(features)
+        
+        # Convert to PyTorch tensor
+        tensor = torch.tensor(features, dtype=torch.float32, device=self.device)
+        
+        return tensor
+    
+    def predict(self, batch: Any) -> np.ndarray:
+        """
+        Run PyTorch model prediction.
+        
+        Args:
+            batch: Preprocessed features (PyTorch tensor)
+            
+        Returns:
+            numpy array of predictions
+        """
+        with torch.no_grad():
+            predictions = self.torch_model(batch)
+            
+            # Convert to numpy
+            predictions = predictions.cpu().numpy()
+            
+            # Clean extra dimensions if needed
+            if predictions.ndim > 2:
+                predictions = np.squeeze(predictions)
+        
+        return predictions
+    
+    def postprocess(self, raw: Any) -> dict:
+        """
+        Postprocess PyTorch model predictions.
+        
+        Args:
+            raw: Raw predictions from predict()
+            
+        Returns:
+            dict with processed predictions and metadata
+        """
+        if not isinstance(raw, np.ndarray):
+            raw = np.array(raw)
+        
+        # Determine interpretation based on output type
+        if self._output_type == "single-output":
+            interpretation = "Single mutation probability per position"
+        elif self._output_type == "dual-output":
+            interpretation = "Column 0: P(no mutation), Column 1: P(mutation)"
+        else:
+            interpretation = "Multi-class probabilities per position"
+        
+        return {
+            "predictions": raw,
+            "shape": raw.shape,
+            "prediction_type": self._output_type,
+            "interpretation": interpretation,
+            "num_positions": raw.shape[0] if len(raw.shape) > 0 else 0
+        }
+
+
 def load_model(model_path: str, model_name: Optional[str] = None, description: Optional[str] = None, source: str = "server"):
     """
     Load a COVID-19 mutation prediction model.
     
+    Automatically detects model type based on file extension and loads the appropriate model class.
+    
     Args:
-        model_path: Path to the Keras model file (.keras or .h5) or uploaded file path
+        model_path: Path to the model file (.keras, .h5, .pt, .pth, etc.)
         model_name: Optional custom name for the model
         description: Optional description of what the model does
         source: Source of the model - "server" (default), "uploaded", or "registry"
         
     Returns:
-        CovMutExKerasModel instance implementing CovMutExModel Protocol
+        Model wrapper instance implementing CovMutExModel Protocol
+        - CovMutExKerasModel for Keras/TensorFlow models
+        - CovMutExPyTorchModel for PyTorch models
         
     Raises:
         FileNotFoundError: If model file doesn't exist
         ValueError: If model file format is not supported
+        ImportError: If required framework is not installed
         
-    Example:
-        # Load server-side model
+    Examples:
+        # Load Keras model
         model = load_model("models/balanced_data_model.keras")
         
-        # Load uploaded model (from temp directory)
+        # Load PyTorch model
+        model = load_model("models/pytorch_model.pt", source="server")
+        
+        # Load uploaded H5 model
         model = load_model("/tmp/uploaded_model.h5", 
-                          model_name="User Uploaded Model",
+                          model_name="User Model",
                           source="uploaded")
     """
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
     
-    # Validate file extension
-    valid_extensions = ['.keras', '.h5', '.pb', '.hdf5']
+    # Get file extension
     file_ext = os.path.splitext(model_path)[1].lower()
     
-    if file_ext not in valid_extensions:
-        raise ValueError(f"Unsupported model format: {file_ext}. Supported formats: {valid_extensions}")
-
-    return CovMutExKerasModel(model_path, model_name, description, source)
+    # PyTorch models
+    if file_ext in ['.pt', '.pth']:
+        if not PYTORCH_AVAILABLE:
+            raise ImportError(
+                f"PyTorch model detected ({file_ext}) but PyTorch is not installed. "
+                "Install with: pip install torch"
+            )
+        return CovMutExPyTorchModel(model_path, model_name, description, source)
+    
+    # Keras/TensorFlow models
+    elif file_ext in ['.keras', '.h5', '.hdf5', '.pb']:
+        return CovMutExKerasModel(model_path, model_name, description, source)
+    
+    # Unsupported format
+    else:
+        supported_formats = ['.keras', '.h5', '.hdf5', '.pb']
+        if PYTORCH_AVAILABLE:
+            supported_formats.extend(['.pt', '.pth'])
+        
+        raise ValueError(
+            f"Unsupported model format: {file_ext}\n"
+            f"Supported formats: {supported_formats}"
+        )
