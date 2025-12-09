@@ -52,6 +52,32 @@ UPLOADED_MODELS_DIR = os.path.join(
 )
 
 @api_view(["GET"])
+def get_models():
+    """
+    GET endpoint to retrieve model names for uploaded models.
+    Returns the JSON file containing model names in a list.
+    
+    Example: GET /api/models/
+    """
+    try:
+        available_models = []
+        if os.path.exists(UPLOADED_MODELS_DIR):
+            available_models = [d for d in os.listdir(UPLOADED_MODELS_DIR) 
+                                if os.path.isdir(os.path.join(UPLOADED_MODELS_DIR, d))]
+            
+            return JsonResponse({
+                'available_models': available_models
+            }, status=200)
+        
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Failed to retrieve models',
+            'details': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+
+@api_view(["GET"])
 def get_model_parameters(request):
     """
     GET endpoint to retrieve custom_parameters.json for uploaded models.
