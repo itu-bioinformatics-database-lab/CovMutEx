@@ -14,8 +14,6 @@ import time
 import numpy as np
 from typing import Optional, Dict, List, Tuple, Any
 
-from .feature_extractor import cache_precomputed_features
-
 
 def measure_time(label: str, start_time: float) -> None:
     """
@@ -110,7 +108,9 @@ def predict_mutations(
     elapsed_day: Optional[int] = None,
     protein_regions: Optional[Dict] = None,
     selectedModel: str = "balanced_data_model",
-    model_wrapper = None
+    model_wrapper = None,
+    feature_extractor = None,
+    **custom_params
 ) -> np.ndarray:
     """
     Predicts mutation probabilities for precomputed features using CovMutEx Model Protocol.
@@ -129,6 +129,8 @@ def predict_mutations(
         protein_regions: Dict of protein regions (optional)
         selectedModel: Model name for logging
         model_wrapper: CovMutExKerasModel instance (Protocol-based wrapper)
+        feature_extractor: CovMutExFeatureExtractor instance (Protocol-based wrapper)
+        **custom_params: Additional custom parameters to pass to model and extractor
     
     Returns:
         numpy array of predictions with shape (29904, N) where N depends on model output type
@@ -146,16 +148,25 @@ def predict_mutations(
     process_time = time.time()
     print("Using model: ", selectedModel)
 
-    features = cache_precomputed_features(
-        cache_path=cache_path,
+    # NEW: Use Protocol-based feature extractor
+    print(f"Using feature extractor: {feature_extractor.get_metadata()['name']}")
+    
+    # Tek bir çağrı - tüm extractor'lar için
+    # Default extractor cache_path, codon_mapping_path, config_file kullanır
+    # Uploaded/custom extractor'lar bunları ignore eder
+    features = feature_extractor.extract_features(
         genome_seq=genome_seq,
         mutations=mutations,
-        codon_mapper=codon_mapper,
-        config_file=config_file,
-        node_ids=node_ids,
+        node_id=node_ids,
         elapsed_day=elapsed_day,
-        protein_regions=protein_regions
+        protein_regions=protein_regions,
+        k=30,
+        cache_path=cache_path,
+        codon_mapping_path=codon_mapper,
+        config_file=config_file,
+        **custom_params  # Pass custom parameters to extractor
     )
+    
     process_time_end = time.time()
     print(f"Feature extraction time: {process_time_end - process_time:.2f}s")
     print(f"Feature shape received: {features.shape}")
