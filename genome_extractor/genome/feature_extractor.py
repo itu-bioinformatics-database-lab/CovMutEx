@@ -10,7 +10,6 @@ import h5py
 import numpy as np
 import csv
 import time
-import numpy as np
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import cProfile
 import tensorflow as tf
@@ -556,141 +555,117 @@ def get_sample_depth(depth_file_path, nodeId):
         print(f"Error decoding JSON file '{depth_file}'.")
         return None
 
-# Example usage
-# node_id = "Northern_Ireland/NIRE-0048ed/2021|2021-07-03"
-# depth_file = 'covid19-genome-feature-extractor-master/depth_date.json'
-# depth = get_sample_depth(depth_file, node_id)
-# print(f"Depth for {node_id}: {depth}")
 
-def process_variant(
+def process_variant_corrected(
     genome_seq, 
     mutations, 
     precomputed_features, 
     codon_mapper, 
     config_file, 
-    protein_regions=None,  # Make protein_regions optional
+    protein_regions=None,
     k=30,
     affected_positions_set=None,
-    elapsed_day=None,  # Make elapsed_day dynamic
+    elapsed_day=None,
     nodeId=None
 ):
     """
-    Process a variant by recalculating features for mutated regions, 
-    using precomputed features for non-mutated regions, and narrowing down
-    predictions to the selected protein region if provided. 
-    If no protein region is given, it only considers the mutation window.
+    Process a variant by recalculating features ONLY for mutated regions.
+    For each affected position, generates ONE base feature vector.
+    The 4 nucleotide variations will be created during prediction.
+    
+    Returns a dictionary: {position: feature_vector}
     """
     startPro = time.time()
-
-    feature_list = []  # To collect feature vectors
-
+    
     mid_point = k // 2
     padded_seq = "-" * mid_point + genome_seq + "-" * mid_point
-    updated_features = precomputed_features.copy()
+    updated_features = {}  # Dictionary to store only affected positions
     nucleotides = ['A', 'T', 'C', 'G']
-    with open(codon_mapping_path) as codon_file:
-        codon_mapper = json.load(codon_file)
-
+    
     aa_seq = [codon_mapper.get(genome_seq[i:i+3], 'X') for i in range(0, len(genome_seq), 3)]
+    
     print("Started extracting phylo info")
     startPhylo = time.time()
     phylo_features, phylo_diversity = extract_phylogenetic_features(phylo_tree_path)
     endPhylo = time.time()
-    endPhylo = endPhylo - startPhylo 
-    print("Finished extracting phylo info", endPhylo)
-    print("phylo feature", type(phylo_features))
-    if 'total_branch_length' in phylo_diversity:
-        print(phylo_diversity['total_branch_length'])
-    else:
-        print("total_branch_length key not found!")
-
-
-    # Get affected positions based on mutations
-    affected_positions_set = get_affected_positions(mutations, len(genome_seq), mid_point, protein_regions=protein_regions)
+    print(f"Finished extracting phylo info: {endPhylo - startPhylo:.2f}s")
+    
+    # Get affected positions
+    if affected_positions_set is None:
+        affected_positions_set = get_affected_positions(mutations, len(genome_seq), mid_point, protein_regions=protein_regions)
     
     if protein_regions:
-        # Filter affected positions to be within protein region bounds
         for protein, (region_start, region_end) in protein_regions.items():
-            affected_positions_set = {idx for idx in affected_positions_set if idx in range(region_start, region_end + 1)}
+            affected_positions_set = {idx for idx in affected_positions_set if region_start <= idx <= region_end}
 
     phylo_value = phylo_features.get(nodeId, 0) if nodeId else 0
+    mutated_positions = {m[0] - 1 for m in mutations}
 
-    # List to store mutated positions
-    mutated_positions_indices = []
-
-    # Process affected positions
+    print(f"Processing {len(affected_positions_set)} affected positions")
+    
+    # Process each affected position
     for idx in affected_positions_set:
         try:
-            # If precomputed features exist, and mutation is not at the current position, skip it
-            mutated_positions = {m[0] - 1 for m in mutations}
+            # If position not mutated and exists in precomputed, skip
             if idx in precomputed_features and idx not in mutated_positions:
                 updated_features[idx] = precomputed_features[idx]
                 continue
 
-            # Mark the position as mutated
-            if idx in mutated_positions:
-                mutated_positions_indices.append(idx)
-
-            # Find the protein region for the current idx if protein_regions is provided
             protein_reg = find_protein_region(idx, protein_regions) if protein_regions else None
-
-            # Sliding window extraction
             window = padded_seq[idx:idx + k]
             aa_idx = idx // 3
             codon_start = aa_idx * 3
             aa_nucleotides = list(genome_seq[codon_start:codon_start + 3])
             original_aa = aa_seq[aa_idx]
-            original_aa_features = get_aa_features(original_aa, original_aa, config_file)
 
-            # Ignore windows outside genome boundaries or incomplete codons
             if len(aa_nucleotides) != 3:
                 continue
             
-            mutation_position = idx % 3  # Nucleotide position within codon
-            
+            mutation_position = idx % 3
             original_codon = list(genome_seq[codon_start:codon_start + 3])
-            for nucleotide in nucleotides:
-                mutated_codon = original_codon[:]
-                mutated_codon[mutation_position] = nucleotide
-                new_codon = ''.join(mutated_codon)
-                new_aa = codon_mapper.get(new_codon, 'X')
-                new_aa_features = (
-                    get_aa_features(original_aa, new_aa, config_file)
-                    if new_aa != original_aa
-                    else original_aa_features
-                )
+            center_nucleotide = window[mid_point]
+            
+            # Generate ONE base feature for this position
+            # We'll use the CURRENT nucleotide as placeholder for k+2
+            # The prediction function will replace this with A, T, G, C
+            
+            mutated_codon = original_codon[:]
+            # Use current nucleotide as default
+            new_codon = ''.join(mutated_codon)
+            new_aa = codon_mapper.get(new_codon, 'X')
+            
+            new_aa_features = get_aa_features(original_aa, new_aa, config_file)
 
-                # Build feature vector for the mutated position
-                sample_data = [
-                    *list(window),  # 1...k => sliding window
-                    window[mid_point],  # k+1 => center of k-mer
-                    nucleotide,  # k+2 => nucleotide after mutation
-                    idx,  # k+3 => index
-                    config_file['nucleotide sub. matrix'][window[mid_point]][nucleotide],  # k+4 => PAM score
-                    aa_seq[aa_idx],  # k+5 => original amino acid
-                    new_aa,  # k+6 => mutated amino acid
-                    config_file['AA PAM matrix'][aa_seq[aa_idx]][new_aa],  # k+7 => AA PAM score
-                    int(aa_seq[aa_idx] == new_aa),  # k+8 => synonymous (1) or non-synonymous (0)
-                    elapsed_day,  # k+9 => dynamic elapsed day value
-                    protein_reg,  # k+10 => protein region (optional)
-                    phylo_value,  # Normalized phylogenetic feature
-                    phylo_diversity['total_branch_length'],
-                    *new_aa_features,
-                ]
+            # Build base feature vector
+            sample_data = [
+                *list(window),  # 1...k => sliding window (30 features)
+                center_nucleotide,  # k+1 => center nucleotide (CURRENT)
+                center_nucleotide,  # k+2 => placeholder (will be replaced during prediction)
+                idx,  # k+3 => position index
+                config_file['nucleotide sub. matrix'][center_nucleotide][center_nucleotide],  # k+4
+                original_aa,  # k+5 => original amino acid
+                new_aa,  # k+6 => new amino acid (placeholder)
+                config_file['AA PAM matrix'][original_aa][new_aa],  # k+7
+                int(original_aa == new_aa),  # k+8 => synonymous flag
+                elapsed_day if elapsed_day else 0,  # k+9 => elapsed day
+                protein_reg if protein_reg else "Non-coding",  # k+10 => protein region
+                phylo_value,  # Phylogenetic feature
+                phylo_diversity['total_branch_length'],
+                *new_aa_features,  # 16 amino acid features
+            ]
 
-                # Preprocess and update the feature vector for the mutated position
-                updated_features[idx] = preprocess_input(sample_data, expected_size=205)
+            # Preprocess and store
+            preprocessed = preprocess_input(sample_data, expected_size=205)
+            updated_features[idx] = preprocessed.flatten()  # Store as 1D array
 
-        
-
-                
         except Exception as e:
             print(f"Error processing position {idx}: {e}")
             continue
-    print("length of mutation positions",  len(mutated_positions_indices),  mutated_positions_indices)
-    # Return both the updated features and the list of mutated positions
+    
     endPro = time.time()
-    print("Time spent processing Variant: ", endPro-startPro)
+    print(f"Time spent processing variant: {endPro - startPro:.2f}s")
+    print(f"Generated features for {len(updated_features)} positions")
+    
     return updated_features
 
 
@@ -699,133 +674,81 @@ node_ids = [
 	"EGY/CCHE57357_Wave_3_A029/2021|MZ380261.1|2021-05-11"
 ];
 
+
+
 def cache_precomputed_features(
     cache_path, genome_seq, mutations, codon_mapper, config_file, node_ids, 
     elapsed_day=None, protein_regions=None
 ):
+    """
+    Cache features for affected positions only.
+    Combines with base features to create full genome representation.
+    """
     # Load base precomputed features
     with h5py.File('features.h5', 'r') as h5f:
         base_features = h5f['features'][:]
         print(f"Base features shape: {base_features.shape}")
     
-    # Function to map limited features back to full space
-    def map_features_to_full_space(limited_features, affected_positions, base_features):
-        """
-        Insert 205-dim feature vectors into the base_features array at specified positions.
-        """
-        full_features = np.copy(base_features)
-
-        for pos in affected_positions:
-            if pos in limited_features:
-                full_features[pos] = limited_features[pos]
-            else:
-                raise ValueError(f"Missing feature for affected position {pos}")
-
-        return full_features
-
-
-
-
-    with h5py.File(cache_path, 'r+') as hdf:
-
+    base_features = base_features.squeeze()  # Shape: (29904, 205)
     
+    with h5py.File(cache_path, 'r') as hdf:
         for node_id in node_ids:
-        
             node_id_str = str(node_id)
-            affected_positions = sorted({m[0] for m in mutations})
-            print(f"Affected positions: {affected_positions}")
             
-            # Check if we need to process mutations
+            # Get affected positions
+            affected_positions = sorted({m[0] - 1 for m in mutations})
+            print(f"Affected positions: {len(affected_positions)} positions")
+            
             if node_id_str not in hdf:
                 print(f"Processing new mutations for NodeId {node_id}")
                 
                 if affected_positions:
-                    # Get features for affected positions
-                    limited_features = process_variant(
+                    # Process only affected positions
+                    limited_features = process_variant_corrected(
                         genome_seq,
                         mutations,
-                        {},  # Empty dict since we're not using precomputed
+                        {},
                         codon_mapper,
                         config_file,
                         nodeId=node_id,
-                        affected_positions_set=set(affected_positions)
+                        affected_positions_set=set(affected_positions),
+                        elapsed_day=elapsed_day,
+                        protein_regions=protein_regions
                     )
-                    print(f"Limited features length: {len(limited_features) if not isinstance(limited_features, dict) else len(limited_features.keys())}")
                     
-                    
-                    # Map limited features to full space
-                    combined_features = map_features_to_full_space(limited_features, affected_positions, base_features)
+                    # Combine with base features
+                    combined_features = base_features.copy()
+                    for pos, feature in limited_features.items():
+                        combined_features[pos] = feature
                 else:
-                    combined_features = np.copy(base_features)
+                    combined_features = base_features.copy()
                 
-                # Cache the new features
-                if node_id_str in hdf:
-                    del hdf[node_id_str]
-                hdf.create_dataset(node_id_str, data=combined_features)
+                # Cache the combined features
+                with h5py.File(cache_path, 'a') as hdf_write:
+                    if node_id_str in hdf_write:
+                        del hdf_write[node_id_str]
+                    hdf_write.create_dataset(node_id_str, data=combined_features)
+                
+                print(f"Cached features for {node_id_str}")
             else:
                 print(f"Loading cached features for NodeId {node_id}")
                 combined_features = hdf[node_id_str][:]
-
-            # Update elapsed day if provided
-            if elapsed_day is not None:
-                combined_features[10] = elapsed_day
-                print(f"Updated elapsed day")
-
-            # Handle protein regions if provided
+            
+            # Handle protein regions if specified
             if protein_regions:
-                region_features_dict = {}
+                region_features_list = []
                 for protein, (region_start, region_end) in protein_regions.items():
-                    region_positions = set(range(region_start, region_end + 1))
-                    affected_region = region_positions.intersection(affected_positions)
-                    
-                    if not affected_region:
-                        print(f"No mutations in {protein} region")
-                        # Use base features for unaffected regions
-                        region_features_dict[protein] = base_features[region_start:region_end + 1]
-                    else:
-                        print(f"Processing mutations in {protein} region")
-                        region_mutations = [m for m in mutations if m[0] in affected_region]
-                        print("Found the regions, starting Variant processing ")
-                        limited_region_features = process_variant(
-                            genome_seq,
-                            region_mutations,
-                            {},
-                            codon_mapper,
-                            config_file,
-                            nodeId=node_id,
-                            affected_positions_set=affected_region
-                        )
-                        
-                        # Map region features to their positions
-                        region_features = map_features_to_full_space(
-                            limited_region_features, 
-                            affected_region,
-
-                            combined_features[region_start:region_end + 1]
-                        )
-                        
-
-                        region_features_dict[protein] = region_features
-
-                # Combine all selected regions' features and return
-                combined_features = np.concatenate(
-                    [region_features_dict[protein] for protein in protein_regions],
-                    axis=0
-                )
-                return combined_features  # Return only the features for the selected protein regions
-
-            # Final processing
+                    region_features_list.append(combined_features[region_start:region_end + 1])
+                
+                combined_features = np.concatenate(region_features_list, axis=0)
+                print(f"Extracted {len(protein_regions)} protein regions")
+            
             combined_features = np.array(combined_features, dtype=np.float32)
             combined_features = np.nan_to_num(combined_features)
             
-            # Update cache
-            if node_id_str in hdf:
-                del hdf[node_id_str]
-            hdf.create_dataset(node_id_str, data=combined_features)
-            
             print(f"Final features shape: {combined_features.shape}")
             return combined_features
-
+    
     return None
 
 def retrieve_features(cache_path, nodeId):
@@ -880,10 +803,6 @@ with h5py.File('features.h5', 'r') as h5f:
 
 print("gotten precomp features")
 
-# print(precomputed_features[:3])
-
-# print(precomputed_features[20664])
-# print("length of precomputed", precomputed_features.shape)
 precomputed_features = precomputed_features.squeeze()
 
 # Test with a cached NodeId
@@ -897,40 +816,6 @@ node_ids = [
 mutations = parse_mutations(node_id[0])
 depth = get_sample_depth(depth_file, node_id[0])
 
-# features = cache_precomputed_features(
-#         cache_path, 
-#         genome_seq= construct_variant_genome(genome_sequence, mutations),
-#         mutations=parse_mutations(node_id),
-#         codon_mapper=json.load(open(codon_mapping_path)),
-#         config_file=configs(),
-#         node_ids=node_id,
-#         elapsed_day=110,
-#         protein_regions=None
-#     )
-
-
-
-
-
-# print("length", len(features), type(features), features.shape)
-
-  # Should directly load cached features without calling process_variant
-
-
-# # Process variant
-
-# for node_id in node_ids:
-#     mutations = parse_mutations(node_id)
-#     updated_features = process_variant(
-# 	     genome_seq=get_sequence(),
-# 	     mutations=parse_mutations(node_id),
-# 	     precomputed_features=precomputed_features,
-# 	     codon_mapper=json.load(open(codon_mapping_path)),
-# 	     config_file=configs(),
-# 	     # protein_regions={"S": [345, 2020]},  # Add real protein regions if available
-# 	     k=30,
-#	     nodeId = node_id
-#	 )
 	 
 	 
 for node_id in node_ids:
@@ -948,121 +833,272 @@ for node_id in node_ids:
 		 protein_regions=None
 	     )
 
-# updated_features = process_variant(
-#     genome_seq=get_sequence(),
-#     mutations=mutations,
-#     precomputed_features=precomputed_features,
-#     codon_mapper=json.load(open(codon_mapping_path)),
-#     config_file=configs(),
-#     # protein_regions={"S": [345, 2020]},  # Add real protein regions if available
-#     k=30,
-#     nodeId = "USA/OH-CDC-ASC210099476/2021|OK223319.1|2021-09-02"
-# )
-
-
-
-
-
-# # Retrieve features for a specific nodeId
-
-# print(features)
-# # comb_feat = combine_features()
-# # # Check the updated feature vector for a specific position
-# # print(updated_features)
-# print("length of features", len(updated_features))
-# # profiler.disable()  # Stop profiling
-# # profiler.print_stats(sort="cumtime")  # Print stats sorted by cumulative time
-
-# from django.core.cache import cache
-
-# def get_selected_model():
-#     selected_model = cache.get('selected_model')
-#     print(f"Cached selected model is: {selected_model}")
-#     return selected_model
-
-# selected_model_name = get_selected_model()
-
-# if not selected_model_name:
-#     # Option 1: Set a default model name
-#     selected_model_name = "model_for_1k"
-# else:
-#     print("Using model", selected_model_name)
-#prev_dir = os.path.normpath(os.getcwd() + os.sep + os.pardir)
-#path_to_covid19_models = os.path.join(prev_dir, 'covid19_models'
 current_dir = os.getcwd()
 genome_extractor_path = os.path.dirname(current_dir)
-# model_path = '../covid19_models/model_for_1k.h5'
-# print("model", selected_model_name)
-model = tf.keras.models.load_model(model_path)
 
-
-#def predict_mutations(cache_path, genome_seq, mutations, codon_mapper, config_file, node_ids, elapsed_day=None, protein_regions=None):
-#    """
-#    Predicts mutation probabilities for precomputed features.
-#    Input features shape: (29904, 205) containing all possible transitions
-#    Returns matrix of shape (29904, 4) where each row contains probabilities for A,T,G,C transitions
-#    """
-#    
-# Get precomputed features - shape (29904, 205)
-# print("Using model: ",selected_model_name )
-#    features = cache_precomputed_features(
-#        cache_path=cache_path,
-#        genome_seq=genome_seq,
-#        mutations=mutations,
-#        codon_mapper=codon_mapper,
-#        config_file=config_file,
-#        node_ids=node_ids,
-#        elapsed_day=elapsed_day,
-#        protein_regions=protein_regions
-#    )
-#
-#    print("Shape of feature received: ", features.shape)
-#    print("Length of Features :", len(features))
-#
-#    features = features.squeeze()
-#    print("Shape of feature before model input: ", features.shape)
-#   predictions = model.predict(features, verbose=0)
-    
-#    return predictions
-
-def predict_mutations(cache_path, genome_seq, mutations, codon_mapper, config_file, node_ids, elapsed_day=None, protein_regions=None):
+def load_legacy_keras_model(model_path):
     """
-    Predicts mutation probabilities for precomputed features.
-    Input features shape: (29904, 205) containing all possible transitions
-    Returns matrix of shape (29904, 4) where each row contains probabilities for A,T,G,C transitions
+    Load Keras models saved in older formats with batch_shape parameter.
+    Handles compatibility issues between different Keras/TensorFlow versions.
     """
+    print(f"Attempting to load model from: {model_path}")
     
-    # Get precomputed features - shape (29904, 205)
-    # print("Using model: ",selected_model_name )
-    features = cache_precomputed_features(
-        cache_path=cache_path,
-        genome_seq=genome_seq,
-        mutations=mutations,
-        codon_mapper=codon_mapper,
-        config_file=config_file,
-        node_ids=node_ids,
-        elapsed_day=elapsed_day,
-        protein_regions=protein_regions
+    # Method 1: Try using tf_keras (most reliable for legacy models)
+    try:
+        import tf_keras
+        print("Using tf_keras for loading...")
+        model = tf_keras.models.load_model(model_path, compile=False)
+        print("Model loaded successfully with tf_keras")
+        return model
+    except ImportError:
+        print("tf_keras not installed. Attempting to install...")
+        try:
+            import subprocess
+            import sys
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'tf-keras'])
+            print("tf_keras installed successfully. Retrying model load...")
+            import tf_keras
+            model = tf_keras.models.load_model(model_path, compile=False)
+            print("Model loaded successfully with tf_keras")
+            return model
+        except Exception as e:
+            print(f"Could not install or use tf_keras: {e}")
+    except Exception as e:
+        print(f"tf_keras loading failed: {e}")
+    
+    # Method 2: Try direct loading with compile=False
+    try:
+        print("Trying standard TensorFlow Keras loading...")
+        model = tf.keras.models.load_model(model_path, compile=False)
+        print("Model loaded successfully with standard method")
+        return model
+    except Exception as e:
+        print(f"Standard loading failed: {e}")
+    
+    # Method 3: Try loading from .h5 format if it exists
+    h5_path = model_path.replace('.keras', '.h5')
+    if os.path.exists(h5_path):
+        try:
+            print(f"Trying to load .h5 format from: {h5_path}")
+            model = tf.keras.models.load_model(h5_path, compile=False)
+            print("Model loaded successfully from .h5 format")
+            return model
+        except Exception as e:
+            print(f"Failed to load .h5 format: {e}")
+    
+    # If all methods fail
+    raise RuntimeError(
+        f"Could not load model from {model_path}.\n"
+        "The model was saved with an older version of Keras.\n\n"
+        "Please try one of the following:\n"
+        "1. Make sure tf-keras is installed: pip install tf-keras\n"
+        "2. Check if there's a .h5 version of the model\n"
+        "3. Contact the model creator to resave it in a compatible format\n"
+        f"\nCurrent TensorFlow version: {tf.__version__}"
     )
+model = load_legacy_keras_model(model_path)
 
-    print("Shape of feature received: ", features.shape)
-    print("Length of Features :", len(features))
 
-    features = features.squeeze()
-    print("Shape of feature before model input: ", features.shape)
-    predictions = model.predict(features, verbose=0)
+
+
+def predict_mutations(
+    cache_path, genome_seq, mutations, codon_mapper, config_file, 
+    node_ids, elapsed_day=None, protein_regions=None, k=30, model=None
+):
+    """
+    Predicts mutation probabilities with 4 predictions per position.
+    Regenerates raw features for each nucleotide variation.
     
-    return predictions
+    Returns:
+        predictions: numpy array of shape (num_positions, 4)
+                    where columns represent [A, T, G, C] transition probabilities
+    """
+    print("=" * 70)
+    print("PREDICTION - 4 predictions per position")
+    print("=" * 70)
+    
+    # Load codon mapper
+    if isinstance(codon_mapper, str):
+        with open(codon_mapper) as codon_file:
+            codon_mapper_dict = json.load(codon_file)
+    else:
+        codon_mapper_dict = codon_mapper
+    
+    if model is None:
+        print("No model provided, loading default model...")
+        model = load_legacy_keras_model(model_path)
+    else:
+        print("Using provided model from Django view")
+    
+    # Load phylogenetic features
+    print("Loading phylogenetic features...")
+    phylo_features, phylo_diversity = extract_phylogenetic_features(phylo_tree_path)
+    phylo_value = phylo_features.get(node_ids[0], 0) if isinstance(node_ids, list) and node_ids else 0
+    
+    mid_point = k // 2
+    padded_seq = "-" * mid_point + genome_seq + "-" * mid_point
+    nucleotides = ['A', 'T', 'G', 'C']
+    
+    # Build amino acid sequence
+    aa_seq = [codon_mapper_dict.get(genome_seq[i:i+3], 'X') 
+              for i in range(0, len(genome_seq), 3)]
+    
+    print(f"\n1. Processing genome with {len(genome_seq)} positions")
+    print(f"2. Generating 4 feature variants per position...")
+    
+    all_features = []
+    position_nucleotide_map = []
+    
+    start_time_gen = time.time()
+    
+    # Determine which positions to process
+    if protein_regions:
+        positions_to_process = []
+        for protein, (region_start, region_end) in protein_regions.items():
+            positions_to_process.extend(range(region_start, min(region_end + 1, len(genome_seq))))
+        print(f"   Processing {len(positions_to_process)} positions in protein regions")
+    else:
+        positions_to_process = range(len(genome_seq))
+        print(f"   Processing all {len(genome_seq)} positions")
+    
+    # Generate features for each position and each nucleotide
+    processed_count = 0
+    for idx in positions_to_process:
+        # Get codon information
+        aa_idx = idx // 3
+        codon_start = aa_idx * 3
+        mutation_position = idx % 3
+        
+        # Handle edge cases for incomplete codons
+        if codon_start + 3 > len(genome_seq):
+            continue
+            
+        original_codon = list(genome_seq[codon_start:codon_start + 3])
+        original_aa = aa_seq[aa_idx] if aa_idx < len(aa_seq) else 'X'
+        
+        # Get k-mer window
+        window = padded_seq[idx:idx + k]
+        center_nucleotide = genome_seq[idx]
+        
+        # Find protein region
+        protein_reg = None
+        if protein_regions:
+            for protein, (region_start, region_end) in protein_regions.items():
+                if region_start <= idx <= region_end:
+                    protein_reg = protein
+                    break
+        if protein_reg is None:
+            protein_reg = "Non-coding"
+        
+        # Generate features for each possible nucleotide mutation
+        for nuc in nucleotides:
+            # Calculate mutated codon and amino acid
+            mutated_codon = original_codon[:]
+            mutated_codon[mutation_position] = nuc
+            new_codon = ''.join(mutated_codon)
+            new_aa = codon_mapper_dict.get(new_codon, 'X')
+            
+            # Get amino acid features
+            new_aa_features = get_aa_features(original_aa, new_aa, config_file)
+            
+            # Build complete RAW feature vector (before preprocessing)
+            sample_data = [
+                *list(window),  # Features 0-29: k-mer window
+                center_nucleotide,  # Feature 30: current nucleotide
+                nuc,  # Feature 31: NEW nucleotide (varies for each iteration)
+                idx,  # Feature 32: position index
+                config_file['nucleotide sub. matrix'].get(center_nucleotide, {}).get(nuc, 0),  # Feature 33: PAM score
+                original_aa,  # Feature 34: original amino acid
+                new_aa,  # Feature 35: new amino acid (varies)
+                config_file['AA PAM matrix'].get(original_aa, {}).get(new_aa, 0),  # Feature 36: AA PAM
+                int(original_aa == new_aa),  # Feature 37: synonymous flag (varies)
+                elapsed_day if elapsed_day else 0,  # Feature 38: elapsed day
+                protein_reg,  # Feature 39: protein region
+                phylo_value,  # Feature 40: phylogenetic value
+                phylo_diversity['total_branch_length'],  # Feature 41: phylo diversity
+                *new_aa_features,  # Features 42-57: 16 amino acid features
+            ]
+            
+            # Preprocess the RAW feature vector
+            preprocessed = preprocess_input(sample_data, expected_size=205)
+            all_features.append(preprocessed.flatten())
+            position_nucleotide_map.append((idx, nuc))
+        
+        processed_count += 1
+        if processed_count % 5000 == 0:
+            print(f"   Processed {processed_count}/{len(list(positions_to_process))} positions...")
+    
+    end_time_gen = time.time()
+    print(f"   Feature generation completed in {end_time_gen - start_time_gen:.2f}s")
+    
+    # Convert to numpy array
+    all_features = np.array(all_features, dtype=np.float32)
+    num_positions = processed_count
+    
+    print(f"\n3. Expanded features shape: {all_features.shape}")
+    print(f"   Expected: ({num_positions * 4}, 205)")
+    
+    # Make predictions in batches to avoid memory issues
+    print(f"\n4. Running model predictions...")
+    start_pred = time.time()
+    
+    batch_size = 2048
+    predictions_list = []
+    num_batches = (len(all_features) + batch_size - 1) // batch_size
+    
+    for i in range(0, len(all_features), batch_size):
+        batch = all_features[i:i + batch_size]
+        batch_preds = model.predict(batch, verbose=0)
+        predictions_list.append(batch_preds)
+        if (i // batch_size + 1) % 10 == 0:
+            print(f"   Processed batch {i // batch_size + 1}/{num_batches}")
+    
+    predictions = np.concatenate(predictions_list, axis=0)
 
+    end_pred = time.time()
+    print(f"   Predictions completed in {end_pred - start_pred:.2f}s")
+    print(f"   Raw predictions shape: {predictions.shape}")
 
+    # Extract the prediction value (handle both (n,1) and (n,2) model outputs)
+    if predictions.shape[1] == 1:
+        # Single output model - use the value directly
+        predictions_flat = predictions[:, 0]
+    elif predictions.shape[1] == 2:
+        # Dual output model - use the mutation probability (second column)
+        predictions_flat = predictions[:, 1]
+    else:
+        raise ValueError(f"Unexpected model output shape: {predictions.shape}")
 
+    print(f"   Flattened predictions shape: {predictions_flat.shape}")
 
+    # Reshape to (num_positions, 4)
+    # Each group of 4 consecutive predictions corresponds to A, T, G, C for one position
+    predictions_reshaped = predictions_flat.reshape(num_positions, 4)
+    print(f"\n5. Final predictions shape: {predictions_reshaped.shape}")
+    print(f"   Format: (num_positions, 4) where columns = [A, T, G, C]")
+    
+    # Display sample predictions
+    print(f"\n6. Sample predictions (first 5 positions):")
+    print(f"   Position | A        | T        | G        | C        | Current")
+    print(f"   " + "-" * 65)
+    sample_positions = list(positions_to_process)[:5] if isinstance(positions_to_process, list) else list(range(5))
+    for i in range(min(5, len(sample_positions))):
+        pos = sample_positions[i]
+        current_nuc = genome_seq[pos] if pos < len(genome_seq) else 'N'
+        print(f"   {pos:8d} | {predictions_reshaped[i][0]:.6f} | "
+              f"{predictions_reshaped[i][1]:.6f} | "
+              f"{predictions_reshaped[i][2]:.6f} | "
+              f"{predictions_reshaped[i][3]:.6f} | {current_nuc}")
+    
+    print("=" * 70)
+    
+    # Save predictions
+    output_file = 'predictions_4_per_position.npy'
+    np.save(output_file, predictions_reshaped)
+    print(f"\n✓ Predictions saved to '{output_file}'")
+    
+    return predictions_reshaped
 
-
-#predictions = predict_mutations(cache_path=cache_path, genome_seq=genome_sequence, 
-#                                mutations=mutations, codon_mapper=codon_mapping_path, 
-#                                config_file=configs(), 
-#                                node_ids=node_id[0], elapsed_day=130, protein_regions=None)
 
 predictions = predict_mutations(cache_path=cache_path, genome_seq=genome_sequence, 
                                 mutations=mutations, codon_mapper=codon_mapping_path, 
@@ -1071,7 +1107,3 @@ predictions = predict_mutations(cache_path=cache_path, genome_seq=genome_sequenc
 
 
 end_time2 = time.time()
-
-
-
-print("Time spent updating",  end_time2 - start_time )
