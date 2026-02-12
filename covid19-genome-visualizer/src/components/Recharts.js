@@ -162,8 +162,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     return { dataForView: normalizedData, offsetForView: 0 };
   }, [normalizedData, focusedProtein]);
   
-  // All other functions (createAnnotations, getFullResolutionWebLogoData, handlers, etc.)
-  // are correct as of the previous step. They are included here for completeness.
+
   const createAnnotations = () => {
     const chartInstance = chartRef.current?.chartInstance;
     if (chartInstance?.weblogoMode || (focusedProtein && !showFullAnnotation && !activeProtein)) { return []; }
@@ -474,11 +473,47 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
       animation: false, responsive: true, maintainAspectRatio: false,
       scales: {
         x: { stacked: true, grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' }, ticks: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' } },
-        y: { stacked: true, type: 'logarithmic', min: 0.001, max: 1.0,title: {
-    display: true,
-    text: 'Mutation Probability (Log Scale)',
-    color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
-  }, ticks: { callback: (v) => { if (v===1) return '10⁰'; if (v===0.1) return '10⁻¹'; if (v===0.01) return '10⁻²'; if (v===0.001) return '10⁻³'; return ''; }, color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' }, grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } },
+        
+        // Logarithmic scale (inactive)
+        // y: { 
+        //   stacked: true, 
+        //   type: 'logarithmic', 
+        //   min: 0.001, 
+        //   max: 1.0,
+        //   title: {
+        //     display: true,
+        //     text: 'Mutation Probability (Log Scale)',
+        //     color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
+        //   }, 
+        //   ticks: { 
+        //     callback: (v) => { 
+        //       if (v===1) return '10⁰'; 
+        //       if (v===0.1) return '10⁻¹'; 
+        //       if (v===0.01) return '10⁻²'; 
+        //       if (v===0.001) return '10⁻³'; 
+        //       return ''; 
+        //     }, 
+        //     color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' 
+        //   }, 
+        //   grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
+        // },
+        
+        // Linear scale (active)
+        y: { 
+          stacked: true, 
+          type: 'linear', 
+          min: 0, 
+          max: 1.0,
+          title: {
+            display: true,
+            text: 'Mutation Probability',
+            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
+          }, 
+          ticks: { 
+            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' 
+          }, 
+          grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
+        },
       },
       plugins: {
         tooltip: {
