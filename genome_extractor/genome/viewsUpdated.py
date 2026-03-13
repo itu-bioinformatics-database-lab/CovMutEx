@@ -24,7 +24,7 @@ import logomaker
 
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from .feature_extractor_updated import parse_mutations, construct_variant_genome
+from .feature_extractor_updated import parse_mutations, construct_variant_genome, get_sample_depth
 from .configs import configs
 
 # NEW: yeni oluşturduğum dosyalardan importlar
@@ -39,12 +39,9 @@ from .helpers import (
 )
 from .security_scanner import scan_folder_for_malware, validate_uploaded_files
 
-# Assuming codon_mapping.json is in the same directory or a subdirectory
 codon_mapping_path = os.path.join(os.path.dirname(__file__), 'codon_aa_mapping.json')
-
-# NEW: buradaki node_features.h5 dosyasının yolu daha farklı
-# Specify the cache path relative to the current file's directory
 cache_path = os.path.join(os.path.dirname(__file__), 'node_features.h5')
+depth_file = os.path.join(os.path.dirname(__file__), 'depth_date.json')
 
 # NEW: Uploaded models base directory constant
 UPLOADED_MODELS_DIR = os.path.join(
@@ -53,7 +50,7 @@ UPLOADED_MODELS_DIR = os.path.join(
 )
 
 @api_view(["GET"])
-def get_models():
+def get_models(request):
     """
     GET endpoint to retrieve model names for uploaded models.
     Returns the JSON file containing model names in a list.
@@ -171,91 +168,81 @@ def generate_weblogo(request):
         prob_matrix = data.get('probability_matrix', [])
         ref_seq = data.get('reference_sequence', '')
         nuc_order = data.get('nucleotide_order', ['A', 'T', 'G', 'C'])
+        confidence_weights = data.get('confidence_weights', None)
         
         if not prob_matrix:
             return JsonResponse({"error": "No probability matrix provided"}, status=400)
             
-        # Validate and convert to numpy array
         prob_array = np.array(prob_matrix)
         if prob_array.ndim != 2 or prob_array.shape[1] != 4:
             return JsonResponse({"error": "Matrix must be Nx4"}, status=400)
-        
 
-        
-        # Create dataframe with specified nucleotide order
+        # Scale letter heights by confidence (raw sigmoid sum)
+        if confidence_weights and len(confidence_weights) == len(prob_matrix):
+            weights = np.array(confidence_weights)
+            max_weight = weights.max() if weights.max() > 0 else 1.0
+            weights_normalized = weights / max_weight
+            prob_array = prob_array * weights_normalized[:, np.newaxis]
+
         df_prob = pd.DataFrame(prob_array, columns=nuc_order)
         
-        # Generate logo
-        plt.figure(figsize=(11, 3.5))  
+        plt.figure(figsize=(11, 3.5))
         logo = logomaker.Logo(df_prob,
                             color_scheme='classic',
                             font_name='Arial',
                             figsize=(11, 3.5),
                             stack_order='big_on_top')
         
-        # Style adjustments with real positions
-        #positions = range(start, end)
-        relative_path = os.path.join("genome.txt")
-
-        # Get the absolute path of the script's directory
         base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Combine the base directory and the relative path
-        genome_file_path = os.path.join(base_dir, relative_path)
+        genome_file_path = os.path.join(base_dir, "genome.txt")
         genome_sequence = read_genome_sequence(genome_file_path)
         
-        num_positions = len(prob_matrix) 
-        positions = range(start, start+num_positions)  
-        print("Positions:", list(positions)) 
+        num_positions = len(prob_matrix)
+        positions = range(start, start + num_positions)
         labels = []
         for pos in positions:
-            genome_pos = pos
-            if 0 <= genome_pos < len(genome_sequence):
-                ref_nuc = genome_sequence[genome_pos]
-                labels.append(f"{pos}-{ref_nuc}")
+            if 0 <= pos < len(genome_sequence):
+                labels.append(f"{pos}-{genome_sequence[pos]}")
             else:
                 labels.append(str(pos))
 
-        # Key adjustment: Shift ticks to align with 1-based labels
-        logo.ax.set_xticks(range(len(positions)))  
+        logo.ax.set_xticks(range(len(positions)))
         logo.ax.set_xticklabels(labels)
-        #logo.ax.set_xticks(range(len(positions)))
-        #logo.ax.set_xticklabels(labels)
         logo.ax.xaxis.set_tick_params(rotation=60)
         logo.ax.set_ylabel("Mutation Probability")
         logo.ax.set_xlabel("Position")
         logo.ax.set_title(f"Mutation Profile (Positions {start}-{end})", pad=10)
         
-        # Highlight reference positions if sequence provided
         if ref_seq and len(ref_seq) == len(prob_matrix):
             for i, nuc in enumerate(ref_seq.upper()):
                 if nuc in nuc_order:
                     logo.highlight_position(p=i, color='lightgray', alpha=0.3)
         
-        # Save to response
         response = HttpResponse(content_type='image/png')
         plt.savefig(response, format='png', dpi=150, bbox_inches='tight')
         plt.close()
+        return response
 
-        return response  
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
 
 def handle_prediction(request):
     try:
         start_time = time.time()
         print("[START] Handling prediction request")
         
-        
-        # Load input data
+        # Extract parameters from request data
         data = request.data if request.method == 'POST' else request.GET
         nodeId = data.get('nodeId')
         elapsedDay = int(data.get('elapsedDay', 0))
         selectedModel = data.get('selectedModel')
         selectedProteinRegion = data.get('selectedProteinRegion', None)
+        print(f"nodeId={nodeId}, elapsedDay={elapsedDay}, model={selectedModel}, region={selectedProteinRegion}")
 
-        print("selected model", selectedModel)
-        print("protein region selected", selectedProteinRegion)
+        # Get tree depth for this node from depth_date.json
+        depth = get_sample_depth(depth_file, nodeId) if nodeId else 0
+        print(f"Tree depth for node: {depth}")
 
         print("[DEBUG] Checking for uploaded files...")
         # NEW: Handle uploaded model file
@@ -476,6 +463,7 @@ def handle_prediction(request):
                             break
             else:
                 model_path = os.path.join(model_directory, "balanced_data_model.keras")
+                selectedModel = "balanced_data_model"  # Set default model name for metadata
             
             if not os.path.exists(model_path):
                 return JsonResponse({
@@ -543,19 +531,19 @@ def handle_prediction(request):
                 "error": f"Failed to load feature extractor: {str(e)}"
             }, status=500)
 
+
+        # Read genome sequence and construct variant genome
+        print("Processing genome sequence...")
         genome_start = time.time()
-        # Read genome sequence
-        # Define the correct relative path
-        relative_path = os.path.join("genome.txt")
-
-        # Get the absolute path of the script's directory
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Combine the base directory and the relative path
-        genome_file_path = os.path.join(base_dir, relative_path)
+        
+        relative_path = os.path.join("genome.txt") # Define the correct relative path
+        base_dir = os.path.dirname(os.path.abspath(__file__)) # Get the absolute path of the script's directory
+        genome_file_path = os.path.join(base_dir, relative_path) # Combine the base directory and the relative path
+        
         genome_sequence = read_genome_sequence(genome_file_path)
         mutations = parse_mutations(nodeId)
         variant_genome_sequence = construct_variant_genome(genome_sequence, mutations)
+
         measure_time("genome_processing", genome_start)
 
         # Extract features
@@ -586,7 +574,8 @@ def handle_prediction(request):
             'config_file': configs(),
             'node_ids': nodeId,
             'elapsed_day': elapsedDay,
-            'protein_regions': {selectedProteinRegion: protein_regions[selectedProteinRegion]} if selectedProteinRegion and selectedProteinRegion in protein_regions else {},
+            'depth': depth,
+            'protein_regions': {selectedProteinRegion: protein_regions[selectedProteinRegion]} if selectedProteinRegion and selectedProteinRegion in protein_regions else None,
             'selectedModel': selectedModel,
             'model_wrapper': model_wrapper,
             'feature_extractor': extractor
@@ -605,8 +594,8 @@ def handle_prediction(request):
         print(f"Predictions obtained: {len(predictions)} mutation probabilities")
         print(f"Sample predictions (first 5): {predictions[:5]}")
         
-        # NEW: Save predictions to file for verification SILMEYI UNUTMA
-        if folder_name:  # Only save for uploaded models
+        # Save predictions to file for uploaded models
+        if folder_name:
             output_file = os.path.join(uploaded_models_dir, folder_name, 'output_predictions.txt')
             try:
                 with open(output_file, 'w') as f:
@@ -622,74 +611,60 @@ def handle_prediction(request):
                 print(f"[DEBUG] Predictions saved to: {output_file}")
             except Exception as e:
                 print(f"[WARNING] Could not save predictions: {e}")
-        # NEW: SILMEYI UNUTMA
-                
-        # NEW: BURASI POSTPROCESS'E GIRIYOR MU SOR?
-        # Example usage:
-        selected_protein_region = tuple(protein_regions[selectedProteinRegion]) if selectedProteinRegion and selectedProteinRegion in protein_regions else None
 
-        # NEW: SILMEYI UNUTMA Initialize variables for uploaded models
+
+        selected_protein_region = (
+            tuple(
+            protein_regions[selectedProteinRegion]) 
+            if selectedProteinRegion and selectedProteinRegion in protein_regions 
+            else None
+        )
+
         genome_data = None
         protein_mutation_probs = None
 
-        # NEW: SILMEYI UNUTMA
-        if not uploaded_model:
-            genome_data_start = time.time()
-            genome_data = calculate_genome_data(genome_sequence, predictions, selected_protein_region=selected_protein_region)
-            measure_time("genome_data_calculation", genome_data_start)
+        genome_data_start = time.time()
+        genome_data = calculate_genome_data(
+            genome_sequence, predictions, 
+            selected_protein_region=selected_protein_region
+        )
+        measure_time("genome_data_calculation", genome_data_start)
 
 
-
-        # NEW: SILMEYI UNUTMA
-        if not uploaded_model:
-            protein_probs_start = time.time()
-            protein_mutation_probs = calculate_protein_region_probabilities(predictions, protein_regions, genome_seq_length=29904 )
-            measure_time("protein_region_probability_calculation", protein_probs_start)
+        protein_probs_start = time.time()
+        predictions_offset = protein_regions[selectedProteinRegion][0] if selectedProteinRegion and selectedProteinRegion in protein_regions else 0
+        protein_mutation_probs = calculate_protein_region_probabilities(
+            predictions, protein_regions,
+            genome_seq_length=29904,
+            predictions_offset=predictions_offset
+        )
+        measure_time("protein_region_probability_calculation", protein_probs_start)
         
 
+        session_save_start = time.time()
+        request.session["genome_data"] = genome_data
+        measure_time("django_session_write_time", session_save_start)
 
-        # NEW: Store genome_data in the session (use _request to access Django's HttpRequest)
-        if hasattr(request, '_request'):
-            request._request.session["genome_data"] = genome_data if genome_data else [] # NEW: SILMEYI UNUTMA
+        json_construction_start = time.time()
         response_data = {
             "nodeId": nodeId,
             "elapsedDay": elapsedDay,
             "selectedModel": selectedModel,
             "selectedProteinRegion": selectedProteinRegion,
             "genomeSequence": variant_genome_sequence,
-            "genomeData": genome_data if genome_data else [], # NEW: SILMEYI UNUTMA
-            "protein_mutation_probs": protein_mutation_probs if protein_mutation_probs else {}, # NEW: SILMEYI UNUTMA
+            "genomeData": genome_data,
+            "protein_mutation_probs": protein_mutation_probs,
             "proteinRegionPossibilities": protein_regions,
-            "modelType": model_metadata['model_type'],
-            "model_metadata": model_metadata,  # Full metadata from Protocol
-            # NEW: 
-            "extractor_metadata": extractor_metadata,  
+            "modelType": "multi-input" if 'multi' in selectedModel.lower() else "single-input",
+            "model_metadata": model_metadata,
+            "extractor_metadata": extractor_metadata,
             "saved_folder": folder_name if uploaded_model else None,
             "custom_parameters": custom_parameters if custom_parameters else None
         }
-        
-        measure_time("total_request_handling", start_time)
-        end_time = time.time()
-        print(f"Total runtime: {end_time - start_time} seconds")
-
+        measure_time("json_data_serialization_prep", json_construction_start)
+        measure_time("total_request_handling_internal", start_time)
         return JsonResponse(response_data)
 
     except Exception as e:
-        import traceback
-        print("=" * 80)
-        print("ERROR IN handle_prediction:")
-        print(traceback.format_exc())
-        print("=" * 80)
+        traceback.print_exc()
         return JsonResponse({"error": f"An error occurred: {str(e)}"}, status=500)
-    
-
-""" ARTIK TEMİZLEMEK YERİNE KAYDEDİYORUZ
-        # NEW: Clean up temporary files if uploaded model was used    
-    finally:
-        if 'temp_dir' in dir() and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                print(f"Cleaned up temporary directory: {temp_dir}")
-            except Exception as cleanup_error:
-                print(f"Warning: Could not clean up temp dir: {cleanup_error}")
- """

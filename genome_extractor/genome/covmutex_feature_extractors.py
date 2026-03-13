@@ -110,6 +110,8 @@ class DefaultCovMutExFeatureExtractor:
         Initialize the default feature extractor.
         """
         self._feature_dim = 205  # After preprocessing
+        # 4 candidate nucleotides (A/T/G/C) per position
+        self.nucleotides_per_position = 4
         
     def extract_features(
         self,
@@ -123,47 +125,48 @@ class DefaultCovMutExFeatureExtractor:
     ) -> np.ndarray:
         """
         Extract features using the default methodology.
-        
+
+        Generates 4 raw feature rows per position (A/T/G/C candidates), bulk-
+        preprocesses them, and returns shape (num_positions * 4, 205).
+        No features.h5 dependency.
+
         Args:
-            genome_seq: Genome sequence
-            mutations: List of mutations
-            node_id: Node identifier
+            genome_seq: Reference genome sequence
+            mutations: List of mutations (used for depth/elapsed context only)
+            node_ids: Node identifier
             elapsed_day: Elapsed days
-            protein_regions: Optional protein regions
+            protein_regions: Optional protein regions to filter
             k: K-mer size
-            **kwargs: Additional parameters:
-                cache_path: Optional HDF5 cache path
-                codon_mapping_path: Optional path to codon mapping JSON
-                config_file: Optional config dict
+            **kwargs: codon_mapper, config_file
         """
         import os
         from . import feature_extractor_updated as feu
-        
-        # Extract kwargs
-        cache_path = kwargs.get('cache_path', None)
+
         codon_mapper = kwargs.get('codon_mapper', None)
-        config_file = kwargs.get('config_file', None)
-        
-        # Calculate paths dynamically if not provided
+        config_file  = kwargs.get('config_file', None)
+
         if codon_mapper is None:
             feu_dir = os.path.dirname(os.path.abspath(feu.__file__))
             codon_mapper = os.path.join(feu_dir, "codon_aa_mapping.json")
-        
+
         if config_file is None:
             config_file = feu.configs()
-        
-        # Extract features using feature_extractor_updated
-        features = feu.cache_precomputed_features(
-            cache_path=cache_path,
+
+        depth = kwargs.get('depth', 0)
+
+        # Build 4-per-position raw feature rows (same logic as feu.predict_mutations)
+        all_raw_data = feu.build_all_raw_feature_rows(
             genome_seq=genome_seq,
-            mutations=mutations,
             codon_mapper=codon_mapper,
             config_file=config_file,
-            node_ids=[node_ids],
             elapsed_day=elapsed_day,
-            protein_regions=protein_regions
+            depth=depth,
+            protein_regions=protein_regions,
+            k=k,
         )
-        
+
+        # Bulk preprocess → (num_positions * 4, 205)
+        features = feu.preprocess_matrix(all_raw_data, expected_size=205)
         return features
     
     def get_feature_dimension(self) -> int:

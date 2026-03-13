@@ -26,6 +26,10 @@ except ImportError:
     JOBLIB_AVAILABLE = False
     joblib = None
 
+# Module-level cache: model_path → model wrapper instance
+# Prevents reloading from disk on every request
+_model_cache: dict = {}
+
 
 @runtime_checkable
 class CovMutExModel(Protocol):
@@ -94,21 +98,13 @@ class CovMutExModel(Protocol):
         """
         ...
     
-    def postprocess(self, raw: Any) -> dict:
+    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
         """
         Postprocess raw predictions.
         
         Args:
             raw: Raw predictions from predict() method
-            
-        Returns:
-            dict with processed predictions and metadata:
-                - predictions: np.ndarray - Processed predictions
-                - shape: tuple - Shape of predictions
-                - prediction_type: str - Type of predictions
-                - interpretation: str - How to interpret the results
-                - num_positions: int - Number of genomic positions
-                - Any other relevant information
+            nucleotides_per_position: When > 1, reshape flat output to (N, npp)
         """
         ...
 
@@ -219,7 +215,7 @@ class CovMutExKerasModel:
         Returns:
             numpy array of predictions
         """
-        predictions = self.keras_model.predict(batch, verbose=0)
+        predictions = self.keras_model.predict(batch, batch_size=4096, verbose=1)
         
         # Remove batch dimension but keep prediction dimensions
         # E.g., (1, 29904, 1) -> (29904, 1) NOT (29904,)
@@ -228,19 +224,32 @@ class CovMutExKerasModel:
         
         return predictions
     
-    def postprocess(self, raw: Any) -> dict:
+    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
         """
         Postprocess Keras model predictions.
-        
+
         Args:
             raw: Raw predictions from predict()
-            
+            nucleotides_per_position: When > 1 (e.g. 4 for A/T/G/C), reshape
+                (N * npp, 1) → (N, npp) so the caller receives one row per
+                genome position.  Default 1 keeps behaviour unchanged.
+
         Returns:
             dict with processed predictions and metadata
         """
         if not isinstance(raw, np.ndarray):
             raw = np.array(raw)
-        
+
+        if nucleotides_per_position > 1:
+            # Flatten to 1-D first, then reshape to (num_positions, npp)
+            if raw.ndim == 2 and raw.shape[1] == 1:
+                prob_values = raw[:, 0]
+            elif raw.ndim == 2 and raw.shape[1] == 2:
+                prob_values = raw[:, 1]   # binary → class-1 probability
+            else:
+                prob_values = raw.ravel()
+            raw = prob_values.reshape(-1, nucleotides_per_position)
+
         # değerlendirme için yorum ekle
         if self._output_type == "single-output":
             interpretation = "Single mutation probability per position"
@@ -248,7 +257,7 @@ class CovMutExKerasModel:
             interpretation = "Column 0: P(no mutation), Column 1: P(mutation)"
         else:
             interpretation = "Multi-class probabilities per position"
-        
+
         return {
             "predictions": raw,
             "shape": raw.shape,
@@ -407,12 +416,13 @@ class CovMutExPyTorchModel:
         
         return predictions
     
-    def postprocess(self, raw: Any) -> dict:
+    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
         """
         Postprocess PyTorch model predictions.
         
         Args:
             raw: Raw predictions from predict()
+            nucleotides_per_position: When > 1, reshape flat output to (N, npp)
             
         Returns:
             dict with processed predictions and metadata
@@ -420,6 +430,15 @@ class CovMutExPyTorchModel:
         if not isinstance(raw, np.ndarray):
             raw = np.array(raw)
         
+        if nucleotides_per_position > 1:
+            if raw.ndim == 2 and raw.shape[1] == 1:
+                prob_values = raw[:, 0]
+            elif raw.ndim == 2 and raw.shape[1] == 2:
+                prob_values = raw[:, 1]
+            else:
+                prob_values = raw.ravel()
+            raw = prob_values.reshape(-1, nucleotides_per_position)
+
         # Determine interpretation based on output type
         if self._output_type == "single-output":
             interpretation = "Single mutation probability per position"
@@ -601,25 +620,29 @@ class CovMutExSklearnModel:
         
         return predictions
     
-    def postprocess(self, raw: Any) -> dict:
+    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
         """
         Postprocess Sklearn model predictions.
         
         Args:
             raw: Raw predictions from predict()
+            nucleotides_per_position: When > 1, reshape flat output to (N, npp)
             
         Returns:
             dict with processed predictions and metadata
         """
         if not isinstance(raw, np.ndarray):
             raw = np.array(raw)
+
+        if nucleotides_per_position > 1:
+            raw = raw.ravel().reshape(-1, nucleotides_per_position)
         
         return {
             "predictions": raw,
             "shape": raw.shape,
             "prediction_type": self._output_type,
             "interpretation": "Encoded sequence prediction (requires decoding)",
-            "num_positions": raw.shape[1] if len(raw.shape) > 1 else raw.shape[0]
+            "num_positions": raw.shape[0] if len(raw.shape) > 0 else 0
         }
 
 
@@ -659,7 +682,13 @@ def load_model(model_path: str, model_name: Optional[str] = None, description: O
     """
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
-    
+
+    # Return cached instance if already loaded (skip cache for uploaded/temp models)
+    cache_key = os.path.abspath(model_path)
+    if cache_key in _model_cache:
+        print(f"[load_model] Returning cached model: {cache_key}")
+        return _model_cache[cache_key]
+
     # Get file extension
     file_ext = os.path.splitext(model_path)[1].lower()
     
@@ -670,7 +699,9 @@ def load_model(model_path: str, model_name: Optional[str] = None, description: O
                 f"PyTorch model detected ({file_ext}) but PyTorch is not installed. "
                 "Install with: pip install torch"
             )
-        return CovMutExPyTorchModel(model_path, model_name, description, source)
+        instance = CovMutExPyTorchModel(model_path, model_name, description, source)
+        _model_cache[cache_key] = instance
+        return instance
     
     # Sklearn models (Joblib pickle)
     elif file_ext in ['.pkl', '.pickle', '.joblib']:
@@ -679,11 +710,15 @@ def load_model(model_path: str, model_name: Optional[str] = None, description: O
                 f"Sklearn model detected ({file_ext}) but joblib is not installed. "
                 "Install with: pip install joblib"
             )
-        return CovMutExSklearnModel(model_path, model_name, description, source)
+        instance = CovMutExSklearnModel(model_path, model_name, description, source)
+        _model_cache[cache_key] = instance
+        return instance
     
     # Keras/TensorFlow models
     elif file_ext in ['.keras', '.h5', '.hdf5', '.pb']:
-        return CovMutExKerasModel(model_path, model_name, description, source)
+        instance = CovMutExKerasModel(model_path, model_name, description, source)
+        _model_cache[cache_key] = instance
+        return instance
     
     # Unsupported format
     else:
