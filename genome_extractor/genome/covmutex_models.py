@@ -1,8 +1,9 @@
 """
-CovMutEx Model Protocol
+CovMutEx model contract.
 
-This module defines the Protocol for COVID-19 mutation prediction models.
-Individual model implementations will be added in the future.
+The runtime talks to every wrapped model through the same five methods:
+metadata(), input_schema(), preprocess(inputs), predict(batch), and
+postprocess(raw, nucleotides_per_position=1).
 """
 
 import os
@@ -29,6 +30,7 @@ except ImportError:
 # Module-level cache: model_path → model wrapper instance
 # Prevents reloading from disk on every request
 _model_cache: dict = {}
+MODEL_CONTRACT_VERSION = "1.0"
 
 
 @runtime_checkable
@@ -137,10 +139,11 @@ class CovMutExKerasModel:
         
         # Keras modeli yüklemek için
         self.keras_model = tf.keras.models.load_model(model_path, compile=False)
-        
+
         # çok girişli mi tek girişli mi olduğunu belirle
         self._is_multi_input = isinstance(self.keras_model.input_shape, list)
-        
+        self._num_inputs = len(self.keras_model.inputs) if self._is_multi_input else 1
+
         # output türünü belirle
         output_shape = self.keras_model.output_shape
         if output_shape[-1] == 1:
@@ -161,8 +164,10 @@ class CovMutExKerasModel:
             "input_shape": str(self.keras_model.input_shape),
             "output_shape": str(self.keras_model.output_shape),
             "is_multi_input": self._is_multi_input,
+            "num_inputs_expected": self._num_inputs,
             "framework": "keras/tensorflow",
-            "source": self.source
+            "source": self.source,
+            "contract_version": MODEL_CONTRACT_VERSION,
         }
     
     def input_schema(self) -> dict:
@@ -175,7 +180,10 @@ class CovMutExKerasModel:
                 "genome_id": "string - variant identifier (e.g., 'hCoV-19/USA/CA-123')",
                 "elapsed_days": "int - days since reference date",
                 "region": "tuple (start, end) - genomic region to analyze",
-                "num_inputs": f"int - number of input copies for multi-input models (default: 10)"
+                "num_inputs": (
+                    "int - number of input copies for multi-input models "
+                    f"(default: {self._num_inputs})"
+                )
             },
             "notes": f"This model is {'multi-input' if self._is_multi_input else 'single-input'}"
         }
@@ -200,7 +208,7 @@ class CovMutExKerasModel:
         
         # çok girişli modeller için girişleri çoğalt
         if self._is_multi_input:
-            num_inputs = inputs.get('num_inputs', 10)
+            num_inputs = inputs.get('num_inputs', self._num_inputs)
             return [features for _ in range(num_inputs)]
         else:
             return features
@@ -215,7 +223,7 @@ class CovMutExKerasModel:
         Returns:
             numpy array of predictions
         """
-        predictions = self.keras_model.predict(batch, batch_size=4096, verbose=1)
+        predictions = self.keras_model.predict(batch, batch_size=4096, verbose=0)
         
         # Remove batch dimension but keep prediction dimensions
         # E.g., (1, 29904, 1) -> (29904, 1) NOT (29904,)
@@ -348,9 +356,11 @@ class CovMutExPyTorchModel:
             "input_shape": self._input_shape,
             "output_shape": self._output_shape,
             "is_multi_input": self._is_multi_input,
+            "num_inputs_expected": 1,
             "framework": "pytorch",
             "source": self.source,
-            "device": str(self.device)
+            "device": str(self.device),
+            "contract_version": MODEL_CONTRACT_VERSION,
         }
     
     def input_schema(self) -> dict:
@@ -521,9 +531,11 @@ class CovMutExSklearnModel:
             "model_type": "single-input",
             "output_type": self._output_type,
             "is_multi_input": self._is_multi_input,
+            "num_inputs_expected": 1,
             "framework": "sklearn",
             "source": self.source,
-            "model_class": type(self.sklearn_model).__name__
+            "model_class": type(self.sklearn_model).__name__,
+            "contract_version": MODEL_CONTRACT_VERSION,
         }
         
         # Add input/output shapes for compatibility

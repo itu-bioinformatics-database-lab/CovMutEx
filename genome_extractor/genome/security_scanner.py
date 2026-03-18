@@ -17,7 +17,7 @@ except ImportError:
 # Allowed file extensions
 ALLOWED_MODEL_EXTENSIONS = ['.keras', '.h5', '.hdf5', '.pkl', '.pt', '.pth']
 ALLOWED_EXTRACTOR_EXTENSIONS = ['.py']
-ALLOWED_HELPER_EXTENSIONS = ['.py', '.json', '.txt', '.csv', '.nwk', '.tsv', '.fasta', '.fa']
+ALLOWED_HELPER_EXTENSIONS = ['.py', '.json', '.txt', '.csv', '.nwk', '.tsv', '.fasta', '.fa', '.yaml', '.yml']
 
 
 def validate_file_extension(filename, allowed_extensions):

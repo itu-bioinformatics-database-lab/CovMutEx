@@ -1,149 +1,78 @@
-from typing import Protocol, Dict, List, Tuple, Optional
+import importlib
+import os
+import sys
+from typing import Any, Dict, List, Optional, Protocol, Tuple
+
 import numpy as np
+
+from .plugin_runtime import PLUGIN_CONTRACT_VERSION, normalize_elapsed_day, normalize_node_ids
+
 
 class CovMutExFeatureExtractor(Protocol):
     """
-    Protocol for feature extraction implementations.
-    
-    Any feature extractor must implement these methods to be compatible
-    with CovMutEx prediction pipeline.
+    Canonical feature extractor contract used by the plugin runtime.
+
+    Uploaded extractors are expected to implement:
+        extract_features(...)
+        get_feature_dimension()
+        get_feature_description()
+        get_metadata()
+
+    Helper files are not part of the contract. They are expected to live in the
+    same bundle directory and can be loaded from the provided `base_dir`.
     """
-    
+
     def extract_features(
         self,
         genome_seq: str,
         mutations: List[Tuple[int, str, str, int, str]],
-        node_id: str,
-        elapsed_day: int,
+        node_ids: List[str],
+        elapsed_day: Optional[int],
         protein_regions: Optional[Dict[str, Tuple[int, int]]] = None,
         k: int = 30,
-        **kwargs
+        **kwargs,
     ) -> np.ndarray:
-        """
-        Extract features for all positions in the genome.
-        
-        Args:
-            genome_seq: Reference or variant genome sequence
-            mutations: List of (position, ref, alt, aa_pos, aa_change)
-            node_id: Phylogenetic node identifier
-            elapsed_day: Days elapsed for temporal prediction
-            protein_regions: Optional dict of protein regions to filter
-            k: K-mer window size
-            **kwargs: Additional extractor-specific parameters
-                     (e.g., cache_path, codon_mapping_path, config_file for default extractor)
-            
-        Returns:
-            numpy array of shape (N, feature_dim) where:
-            - N = number of positions (29904 or protein region length)
-            - feature_dim = number of features per position
-        """
         ...
-    
+
     def get_feature_dimension(self) -> int:
-        """
-        Return the number of features per position.
-        
-        Returns:
-            int: Feature vector dimension (e.g., 205 for default extractor)
-        """
         ...
-    
+
     def get_feature_description(self) -> Dict[str, str]:
-        """
-        Return description of feature composition.
-        
-        Returns:
-            dict: Mapping of feature ranges to their descriptions
-            Example:
-            {
-                "0-29": "K-mer nucleotides (k=30)",
-                "30": "Center nucleotide",
-                "31": "Mutated nucleotide",
-                ...
-            }
-        """
         ...
-    
-    def get_metadata(self) -> Dict[str, any]:
-        """
-        Return metadata about the feature extractor.
-        
-        Returns:
-            dict: Metadata including version, k-mer size, etc.
-        """
+
+    def get_metadata(self) -> Dict[str, Any]:
         ...
+
+
+def _normalize_extractor_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(kwargs)
+    normalized["node_ids"] = normalize_node_ids(kwargs.get("node_ids"))
+    normalized["node_id"] = normalized["node_ids"][0] if normalized["node_ids"] else None
+    normalized["elapsed_day"] = normalize_elapsed_day(kwargs.get("elapsed_day"))
+    return normalized
 
 
 class DefaultCovMutExFeatureExtractor:
-    """
-    Default feature extractor implementation following the paper's methodology.
-    
-    Feature composition (k=30):
-    - Features 0 to k-1 (0-29): K-mer nucleotides
-    - Feature k (30): Original nucleotide at position
-    - Feature k+1 (31): Mutated nucleotide
-    - Feature k+2 (32): Position index
-    - Feature k+3 (33): PAM250 score (nucleotide level)
-    - Feature k+4 (34): Original amino acid
-    - Feature k+5 (35): Mutated amino acid
-    - Feature k+6 (36): PAM250 score (amino acid level)
-    - Feature k+7 (37): Elapsed days
-    - Feature k+8 (38): Phylogenetic depth
-    - Feature k+9 (39): Synonymous indicator (1=yes, 0=no)
-    - Feature k+10 (40): ORF/Protein region name
-    - Features k+11 to k+28 (41-58): AA biochemical properties (18 features)
-      - Hydrophobicity (original, mutated)
-      - Polarity (original, mutated)
-      - Iso-electricity (original, mutated)
-      - Volume (original, mutated)
-      - Weight (original, mutated)
-      - pKa (original, mutated)
-      - pKb (original, mutated)
-      - pKx (original, mutated)
-      - pI (original, mutated)
-    
-    After preprocessing (one-hot encoding + standardization): 205 dimensions
-    """
-    
-    def __init__(self):
-        """
-        Initialize the default feature extractor.
-        """
-        self._feature_dim = 205  # After preprocessing
-        # 4 candidate nucleotides (A/T/G/C) per position
+    def __init__(self) -> None:
+        self._feature_dim = 205
         self.nucleotides_per_position = 4
-        
+
     def extract_features(
         self,
         genome_seq: str,
         mutations: List[Tuple[int, str, str, int, str]],
-        node_ids: str,
-        elapsed_day: int,
+        node_ids: List[str],
+        elapsed_day: Optional[int],
         protein_regions: Optional[Dict[str, Tuple[int, int]]] = None,
         k: int = 30,
-        **kwargs
+        **kwargs,
     ) -> np.ndarray:
-        """
-        Extract features using the default methodology.
+        del mutations, node_ids
 
-        Generates 4 raw feature rows per position (A/T/G/C candidates), bulk-
-        preprocesses them, and returns shape (num_positions * 4, 205).
-        No features.h5 dependency.
-
-        Args:
-            genome_seq: Reference genome sequence
-            mutations: List of mutations (used for depth/elapsed context only)
-            node_ids: Node identifier
-            elapsed_day: Elapsed days
-            protein_regions: Optional protein regions to filter
-            k: K-mer size
-            **kwargs: codon_mapper, config_file
-        """
-        import os
         from . import feature_extractor_updated as feu
 
-        codon_mapper = kwargs.get('codon_mapper', None)
-        config_file  = kwargs.get('config_file', None)
+        codon_mapper = kwargs.get("codon_mapper")
+        config_file = kwargs.get("config_file")
 
         if codon_mapper is None:
             feu_dir = os.path.dirname(os.path.abspath(feu.__file__))
@@ -152,26 +81,20 @@ class DefaultCovMutExFeatureExtractor:
         if config_file is None:
             config_file = feu.configs()
 
-        depth = kwargs.get('depth', 0)
-
-        # Build 4-per-position raw feature rows (same logic as feu.predict_mutations)
         all_raw_data = feu.build_all_raw_feature_rows(
             genome_seq=genome_seq,
             codon_mapper=codon_mapper,
             config_file=config_file,
-            elapsed_day=elapsed_day,
-            depth=depth,
+            elapsed_day=elapsed_day or 0,
+            depth=kwargs.get("depth", 0),
             protein_regions=protein_regions,
             k=k,
         )
+        return feu.preprocess_matrix(all_raw_data, expected_size=self._feature_dim)
 
-        # Bulk preprocess → (num_positions * 4, 205)
-        features = feu.preprocess_matrix(all_raw_data, expected_size=205)
-        return features
-    
     def get_feature_dimension(self) -> int:
         return self._feature_dim
-    
+
     def get_feature_description(self) -> Dict[str, str]:
         return {
             "0-29": "K-mer nucleotides (k=30)",
@@ -182,312 +105,172 @@ class DefaultCovMutExFeatureExtractor:
             "34": "Original amino acid",
             "35": "Mutated amino acid",
             "36": "PAM250 score (amino acid level)",
-            "37": "Elapsed days (temporal feature)",
+            "37": "Elapsed days",
             "38": "Phylogenetic depth",
-            "39": "Synonymous indicator (1=syn, 0=nonsyn)",
+            "39": "Synonymous indicator",
             "40": "Protein region/ORF name",
-            "41-58": "AA biochemical properties (18 features)",
-            "59-204": "Preprocessed features (one-hot + standardized)"
+            "41-58": "AA biochemical properties",
+            "59-204": "One-hot encoded and standardized features",
         }
-    
-    def get_metadata(self) -> Dict[str, any]:
+
+    def get_metadata(self) -> Dict[str, Any]:
         return {
             "name": "DefaultCovMutExFeatureExtractor",
             "version": "1.0",
-            "k_mer_size": 30,
+            "contract_version": PLUGIN_CONTRACT_VERSION,
             "feature_dimension": self._feature_dim,
+            "nucleotides_per_position": self.nucleotides_per_position,
             "preprocessing": "one-hot encoding + standardization",
-            "paper_reference": "CovMutEx methodology"
         }
-    
-# NEW: gerek yok
+
+
 class CustomFeatureExtractor:
     """
-    Custom feature extractor template.
-    
-    REQUIRED METHODS:
-    - extract_features(): Main feature extraction logic
-    - get_feature_dimension(): Return feature vector size
-    - get_feature_description(): Describe your features
-    - get_metadata(): Provide metadata about your extractor
+    Minimal scaffold for future in-repo custom extractors.
     """
-    
-    def __init__(self, **config):
-        """
-        Initialize your feature extractor with custom configuration.
-        
-        Args:
-            **config: Your custom configuration parameters
-        """
+
+    def __init__(self, **config: Any) -> None:
         self.config = config
-        # TODO: Initialize your resources (e.g., load config files, models, etc.)
-        
+
     def extract_features(
         self,
         genome_seq: str,
         mutations: List[Tuple[int, str, str, int, str]],
-        node_id: str,
-        elapsed_day: int,
+        node_ids: List[str],
+        elapsed_day: Optional[int],
         protein_regions: Optional[Dict[str, Tuple[int, int]]] = None,
         k: int = 30,
-        **kwargs
+        **kwargs,
     ) -> np.ndarray:
-        """
-        Extract features for genome positions.
-        
-        Args:
-            genome_seq: Genome sequence string (e.g., "ATGCATGC...")
-            mutations: List of mutations as (nt_pos, ref, alt, aa_pos, aa_change)
-            node_id: Phylogenetic node identifier
-            elapsed_day: Days elapsed for temporal prediction
-            protein_regions: Optional dict of protein regions {"S": (21563, 25384), ...}
-            k: K-mer window size
-            **kwargs: Additional custom parameters
-            
-        Returns:
-            numpy array of shape (N, feature_dim) where:
-            - N = genome length (29904) or protein region length
-            - feature_dim = your feature vector dimension
-            
-        Example output shape: (29904, 100) for 100-dimensional features
-        """
-        # TODO: Implement your feature extraction logic
-        
-        genome_length = len(genome_seq)
-        feature_dim = self.get_feature_dimension()
-        
-        # Example skeleton:
-        features = []
-        for position in range(genome_length):
-            # Extract features for this position
-            feature_vector = self._extract_position_features(
-                genome_seq, position, mutations, node_id, elapsed_day, k
-            )
-            features.append(feature_vector)
-        
-        features = np.array(features, dtype=np.float32)
-        
-        # Filter by protein region if specified
-        if protein_regions:
-            # TODO: Filter positions within protein_regions
-            pass
-        
-        return features
-    
-    def _extract_position_features(
-        self, 
-        genome_seq: str, 
-        position: int,
-        mutations: List[Tuple],
-        node_id: str,
-        elapsed_day: int,
-        k: int
-    ) -> np.ndarray:
-        """
-        Extract features for a single position.
-        
-        TODO: Implement your position-level feature extraction
-        
-        Returns:
-            numpy array of shape (feature_dim,)
-        """
-        # Example: Extract k-mer
-        mid_point = k // 2
-        padded_seq = "-" * mid_point + genome_seq + "-" * mid_point
-        k_mer = padded_seq[position:position + k]
-        
-        # TODO: Add more features (amino acids, biochemical properties, etc.)
-        
-        feature_vector = np.zeros(self.get_feature_dimension())
-        # TODO: Populate feature_vector
-        
-        return feature_vector
-    
+        del mutations, node_ids, elapsed_day, protein_regions, k, kwargs
+        return np.zeros((len(genome_seq), self.get_feature_dimension()), dtype=np.float32)
+
     def get_feature_dimension(self) -> int:
-        """
-        Return the number of features per position.
-        
-        Returns:
-            int: Feature vector dimension
-            
-        Example: return 100 for 100-dimensional features
-        """
-        # TODO: Return your feature dimension
-        return 205  # Replace with your dimension
-    
+        return 205
+
     def get_feature_description(self) -> Dict[str, str]:
-        """
-        Describe the composition of your feature vector.
-        
-        Returns:
-            dict: Mapping of feature indices/ranges to descriptions
-            
-        Example:
-            {
-                "0-29": "K-mer nucleotides",
-                "30": "Position-specific feature X",
-                "31-50": "Biochemical properties",
-                ...
-            }
-        """
-        # TODO: Document your features
-        return {
-            "0-29": "Your features here",
-            # Add more descriptions
-        }
-    
-    def get_metadata(self) -> Dict[str, any]:
-        """
-        Return metadata about your feature extractor.
-        
-        Returns:
-            dict: Metadata including name, version, parameters, etc.
-            
-        Example:
-            {
-                "name": "MyCustomExtractor",
-                "version": "1.0",
-                "author": "Your Name",
-                "feature_dimension": 100,
-                "k_mer_size": 30,
-                ...
-            }
-        """
-        # TODO: Provide metadata
+        return {"0-204": "Placeholder custom feature vector"}
+
+    def get_metadata(self) -> Dict[str, Any]:
         return {
             "name": "CustomFeatureExtractor",
             "version": "1.0",
+            "contract_version": PLUGIN_CONTRACT_VERSION,
             "feature_dimension": self.get_feature_dimension(),
-            "config": self.config
+            "config": self.config,
         }
 
 
-def load_feature_extractor(
-    extractor_type: str = "default",
-    **kwargs
-) -> CovMutExFeatureExtractor:
-    """
-    Factory function to load a feature extractor.
-    
-    Args:
-        extractor_type: Type of extractor ("default", "custom", "uploaded", etc.)
-        **kwargs: Additional arguments for extractor initialization
-        
-    Returns:
-        Feature extractor instance implementing CovMutExFeatureExtractor protocol
-        
-    Examples:
-        >>> # Use default extractor
-        >>> extractor = load_feature_extractor("default")
-        
-        >>> # Use custom extractor with specific config
-        >>> extractor = load_feature_extractor("custom", config_path="my_config.json")
-        
-        >>> # Use uploaded extractor module
-        >>> extractor = load_feature_extractor("uploaded", module_path="/path/to/extractor.py")
-    """
+class UploadedExtractorWrapper:
+    def __init__(self, module: Any, module_path: str, base_dir: str) -> None:
+        self._module = module
+        self._module_path = module_path
+        self._base_dir = base_dir
+        self.nucleotides_per_position = getattr(module, "nucleotides_per_position", 1)
+
+    def extract_features(
+        self,
+        genome_seq: str,
+        mutations: List[Tuple[int, str, str, int, str]],
+        node_ids: List[str],
+        elapsed_day: Optional[int],
+        protein_regions: Optional[Dict[str, Tuple[int, int]]] = None,
+        k: int = 30,
+        **kwargs,
+    ) -> np.ndarray:
+        if not hasattr(self._module, "extract_features"):
+            raise ValueError("Uploaded extractor must define extract_features(...)")
+
+        normalized_kwargs = _normalize_extractor_kwargs(
+            {
+                **kwargs,
+                "node_ids": node_ids,
+                "elapsed_day": elapsed_day,
+                "protein_regions": protein_regions,
+                "k": k,
+                "base_dir": self._base_dir,
+            }
+        )
+        forwarded_kwargs = dict(normalized_kwargs)
+        forwarded_kwargs.pop("node_ids", None)
+        forwarded_kwargs.pop("elapsed_day", None)
+        forwarded_kwargs.pop("protein_regions", None)
+        forwarded_kwargs.pop("k", None)
+        features = self._module.extract_features(
+            genome_seq=genome_seq,
+            mutations=mutations,
+            node_ids=normalized_kwargs["node_ids"],
+            elapsed_day=normalized_kwargs["elapsed_day"],
+            protein_regions=protein_regions,
+            k=k,
+            **forwarded_kwargs,
+        )
+        return np.asarray(features)
+
+    def get_feature_dimension(self) -> int:
+        if hasattr(self._module, "get_feature_dimension"):
+            return self._module.get_feature_dimension()
+        return 205
+
+    def get_feature_description(self) -> Dict[str, str]:
+        if hasattr(self._module, "get_feature_description"):
+            return self._module.get_feature_description()
+        return {"info": "Uploaded extractor using bundle-local helper files"}
+
+    def get_metadata(self) -> Dict[str, Any]:
+        if hasattr(self._module, "get_metadata"):
+            metadata = self._module.get_metadata()
+        else:
+            metadata = {
+                "name": "UploadedExtractor",
+                "version": "1.0",
+                "feature_dimension": self.get_feature_dimension(),
+            }
+        metadata["module_path"] = self._module_path
+        metadata["base_directory"] = self._base_dir
+        metadata["contract_version"] = metadata.get("contract_version", PLUGIN_CONTRACT_VERSION)
+        return metadata
+
+
+def _load_uploaded_module(module_path: str) -> Any:
+    extractor_dir = os.path.dirname(os.path.abspath(module_path))
+    bundle_name = os.path.basename(extractor_dir)
+    uploaded_models_dir = os.path.dirname(extractor_dir)
+    project_root = os.path.dirname(uploaded_models_dir)
+
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    module_name = f"uploaded_models.{bundle_name}.feature_extractor"
+    importlib.invalidate_caches()
+
+    if module_name in sys.modules:
+        return importlib.reload(sys.modules[module_name])
+    return importlib.import_module(module_name)
+
+
+def load_feature_extractor(extractor_type: str = "default", **kwargs) -> CovMutExFeatureExtractor:
     if extractor_type == "default":
-        return DefaultCovMutExFeatureExtractor(**kwargs)
-    
-    elif extractor_type == "custom":
-        # Kullanıcının kendi extractor'ını yükle
+        return DefaultCovMutExFeatureExtractor()
+
+    if extractor_type == "custom":
         return CustomFeatureExtractor(**kwargs)
-    
-    elif extractor_type == "uploaded":
-        # Dinamik olarak yüklenmiş modül
+
+    if extractor_type == "uploaded":
         module_path = kwargs.get("module_path")
         if not module_path:
             raise ValueError("module_path required for uploaded extractor")
-        
-        import importlib.util
-        import os
-        import sys
-        
-        # Get the directory containing the uploaded extractor
-        extractor_dir = os.path.dirname(os.path.abspath(module_path))
-        
-        # Temporarily add the extractor directory to sys.path
-        # This allows relative imports like "from .configs import configs" to work
-        if extractor_dir not in sys.path:
-            sys.path.insert(0, extractor_dir)
-        
-        # Also add the parent directory (genome/) to handle package-level imports
-        parent_dir = os.path.dirname(extractor_dir)
-        if parent_dir not in sys.path:
-            sys.path.insert(0, parent_dir)
-        
         try:
-            spec = importlib.util.spec_from_file_location("uploaded_extractor", module_path)
-            module = importlib.util.module_from_spec(spec)
-            
-            # Set __package__ to allow relative imports
-            module.__package__ = "genome"
-            
-            spec.loader.exec_module(module)
-        except ImportError as e:
-            # If relative imports fail, provide helpful error message
+            module = _load_uploaded_module(module_path)
+        except ImportError as exc:
             raise ImportError(
-                f"Failed to load feature extractor: {str(e)}. "
-                f"Make sure all required files (configs.py, etc.) are uploaded with the extractor."
-            )
-        
-        # Wrapper class oluştur - modülün fonksiyonlarını Protocol'e adapte et
-        class UploadedExtractorWrapper:
-            def __init__(self, module, base_dir):
-                self._module = module
-                self._module_path = module_path
-                self._base_dir = base_dir  # Model/extractor klasörü
-            
-            def extract_features(
-                self,
-                genome_seq: str,
-                mutations: List[Tuple[int, str, str, int, str]],
-                node_ids: List[str],
-                **kwargs  # Custom parameters to pass to uploaded extractor
-            ) -> np.ndarray:
-                if hasattr(self._module, 'extract_features'):
-                    return self._module.extract_features(
-                        genome_seq=genome_seq,
-                        mutations=mutations,
-                        node_ids=node_ids,                        
-                        **kwargs
-                    )
-                else:
-                    raise ValueError(
-                        "Uploaded extractor must have either 'extract_features' or "
-                        "'cache_precomputed_features' function"
-                    )
-            
-            def get_feature_dimension(self) -> int:
-                if hasattr(self._module, 'get_feature_dimension'):
-                    return self._module.get_feature_dimension()
-                return 205  # Default dimension for feature_extractor_updated
-            
-            def get_feature_description(self) -> Dict[str, str]:
-                if hasattr(self._module, 'get_feature_description'):
-                    return self._module.get_feature_description()
-                return {
-                    "info": "Legacy feature extractor - using default feature set",
-                    "dimension": "205 features (one-hot + standardized)"
-                }
-            
-            def get_metadata(self) -> Dict[str, any]:
-                metadata = {}
-                if hasattr(self._module, 'get_metadata'):
-                    metadata = self._module.get_metadata()
-                else:
-                    metadata = {
-                        "name": "UploadedExtractor",
-                        "type": "legacy",
-                        "feature_dimension": self.get_feature_dimension()
-                    }
-                metadata['module_path'] = self._module_path
-                metadata['base_directory'] = self._base_dir
-                return metadata
-        
+                f"Failed to load feature extractor: {exc}. "
+                "Make sure all required helper files are uploaded into the same bundle directory."
+            ) from exc
+
+        extractor_dir = os.path.dirname(os.path.abspath(module_path))
         print(f"Loaded uploaded extractor from: {module_path}")
         print(f"Extractor base directory: {extractor_dir}")
-        return UploadedExtractorWrapper(module, extractor_dir)
-    
-    else:
-        raise ValueError(f"Unknown extractor type: {extractor_type}")
+        return UploadedExtractorWrapper(module, module_path, extractor_dir)
+
+    raise ValueError(f"Unknown extractor type: {extractor_type}")

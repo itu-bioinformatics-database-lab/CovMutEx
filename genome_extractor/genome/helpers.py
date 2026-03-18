@@ -2,6 +2,8 @@ import time
 import numpy as np
 from typing import Optional, Dict, List, Any
 
+from .plugin_runtime import normalize_elapsed_day, normalize_node_ids
+
 
 def measure_time(label: str, start_time: float) -> None:
     """
@@ -83,7 +85,7 @@ def predict_mutations(
     mutations: List,
     codon_mapper: str,
     config_file: Any,
-    node_ids: str,
+    node_ids: Any,
     elapsed_day: Optional[int] = None,
     depth: float = 0,
     protein_regions: Optional[Dict] = None,
@@ -103,8 +105,6 @@ def predict_mutations(
     Returns:
         numpy array of predictions
     """
-    from . import feature_extractor_updated as feu
-
     metadata = model_wrapper.metadata()
     print(f"Using model: {metadata['name']}")
     print(f"Model type: {metadata['model_type']}")
@@ -113,12 +113,15 @@ def predict_mutations(
     extractor_name = feature_extractor.get_metadata()['name'] if feature_extractor else None
     print(f"[predict_mutations] Protocol approach (extractor: {extractor_name})")
 
+    normalized_node_ids = normalize_node_ids(node_ids)
+    normalized_elapsed_day = normalize_elapsed_day(elapsed_day)
+
     process_time = time.time()
     features = feature_extractor.extract_features(
         genome_seq=genome_seq,
         mutations=mutations,
-        node_ids=node_ids,
-        elapsed_day=elapsed_day,
+        node_ids=normalized_node_ids,
+        elapsed_day=normalized_elapsed_day,
         protein_regions=protein_regions,
         k=30,
         cache_path=cache_path,
@@ -128,14 +131,15 @@ def predict_mutations(
         **custom_params
     )
     print(f"Feature extraction time: {time.time() - process_time:.2f}s")
+    features = np.asarray(features)
     print(f"Feature shape received: {features.shape}")
 
     predict_time = time.time()
     preprocessed = model_wrapper.preprocess({
         'features': features,
-        'genome_id': node_ids,
-        'elapsed_days': elapsed_day,
-        'num_inputs': 10
+        'genome_id': normalized_node_ids[0] if normalized_node_ids else None,
+        'elapsed_days': normalized_elapsed_day,
+        'num_inputs': metadata.get('num_inputs_expected', 1)
     })
 
     raw_predictions = model_wrapper.predict(preprocessed)
