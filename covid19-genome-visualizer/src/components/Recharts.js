@@ -115,7 +115,6 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
   const [highResViewRange, setHighResViewRange] = useState(null);
   const currentDecimateFactor = highResViewRange ? 1 : decimateFactor;
 
-  // *** FINAL FIX LOCATION ***
   // This useEffect correctly sets the initial view parameters when the focused protein changes.
   useEffect(() => {
     if (focusedProtein && proteinRegions[focusedProtein]) {
@@ -140,10 +139,9 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
   
   const API_URL = process.env.REACT_APP_API_URL;
   
+
   const normalizedData = useMemo(() => {
     if (!genomeData || !genomeData.length) return [];
-    const isAlreadyNormalized = Math.abs(nucleotides.reduce((sum, _, i) => sum + (genomeData[i]?.[0] || 0), 0) - 1.0) < 1e-9;
-    if (isAlreadyNormalized) return genomeData;
     
     return nucleotides.map((_, nucIdx) =>
       genomeData[nucIdx].map((count, pos) => {
@@ -162,8 +160,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     return { dataForView: normalizedData, offsetForView: 0 };
   }, [normalizedData, focusedProtein]);
   
-  // All other functions (createAnnotations, getFullResolutionWebLogoData, handlers, etc.)
-  // are correct as of the previous step. They are included here for completeness.
+
   const createAnnotations = () => {
     const chartInstance = chartRef.current?.chartInstance;
     if (chartInstance?.weblogoMode || (focusedProtein && !showFullAnnotation && !activeProtein)) { return []; }
@@ -184,33 +181,47 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     return [];
   };
   
+
   const getFullResolutionWebLogoData = (startPos, endPos) => {
     if (!genomeData || !genomeData.length || !genomeSequence) return null;
+    
     const numPositions = endPos - startPos + 1;
     const probabilityMatrix = Array.from({ length: numPositions }, () => [0, 0, 0, 0]);
     const referenceSequence = [];
     const positions = [];
+    
     for (let i = 0; i < numPositions; i++) {
       const absolutePos = startPos + i;
       positions.push(absolutePos);
-      referenceSequence.push(genomeSequence[absolutePos] || "N");
-      const dataAccessIndex = absolutePos;
-      let probabilityData = [0, 0, 0, 0];
-      if (dataAccessIndex >= 0 && dataAccessIndex < (genomeData[0]?.length || 0)) {
-          for (let nucIndex = 0; nucIndex < 4; nucIndex++) {
-              probabilityData[nucIndex] = genomeData[nucIndex]?.[dataAccessIndex] || 0;
-          }
+      const refNuc = genomeSequence[absolutePos] || "N";
+      referenceSequence.push(refNuc);
+      const refIndex = nucleotides.indexOf(refNuc);
+      
+      let rawAll = [0, 0, 0, 0];
+      if (absolutePos >= 0 && absolutePos < (genomeData[0]?.length || 0)) {
+        for (let nucIndex = 0; nucIndex < 4; nucIndex++) {
+          rawAll[nucIndex] = genomeData[nucIndex]?.[absolutePos] || 0;
+        }
       }
-      const sum = probabilityData.reduce((a, b) => a + b, 0);
-      if (sum > 0 && Math.abs(sum - 1.0) > 1e-9) {
-          probabilityMatrix[i] = probabilityData.map(val => val / sum);
-      } else {
-          probabilityMatrix[i] = probabilityData;
+      
+      // Compute reference using RAW values before any normalization
+      // Low raw sum → high reference (stable position)
+      // High raw sum → low reference (hotspot)
+      const mutationSum = rawAll.reduce((a, b) => a + b, 0);
+      if (refIndex !== -1) {
+        rawAll[refIndex] = Math.max(0, 1 - mutationSum);
       }
+      
+      // Now normalize so all 4 sum to 1
+      const total = rawAll.reduce((a, b) => a + b, 0);
+      probabilityMatrix[i] = total > 0 
+        ? rawAll.map(v => v / total) 
+        : rawAll.map(() => 0.25);
     }
+    
     return { positions, probabilityMatrix, referenceSequence };
   };
-
+  
   const fetchWebLogoImage = async (start, end) => {
     if (!genomeData || !genomeSequence) return null;
     const weblogoData = getFullResolutionWebLogoData(start, end);
@@ -219,7 +230,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
       const response = await fetch(`${API_URL}/generate-weblogo/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start, end, probability_matrix: weblogoData.probabilityMatrix, reference_sequence: weblogoData.referenceSequence.join(''), nucleotide_order: nucleotides, decimate_factor: 1 })
+        body: JSON.stringify({ start, end, probability_matrix: weblogoData.probabilityMatrix, confidence_weights: weblogoData.confidenceWeights, reference_sequence: weblogoData.referenceSequence.join(''), nucleotide_order: nucleotides, decimate_factor: 1 })
       });
       if (!response.ok) { throw new Error(`HTTP ${response.status}`); }
       return URL.createObjectURL(await response.blob());
@@ -394,6 +405,8 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
   };
 
   useEffect(() => {
+    const startTimeFull = performance.now(); // START TOTAL TIMER
+    
     const ctx = chartRef.current?.getContext("2d");
     const { dataForView, offsetForView } = chartViewData;
 
@@ -436,31 +449,41 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
         const nucleotide = genomeSequence[position] || "N";
         return `${position}-${nucleotide}`;
     });
+const mutationDetails = [];
+decimatedLabels.forEach((label, idx) => {
+  const segmentStartPos = dataStartPosition + (idx * dataEffectiveDecimateFactor);
+  const segmentEndPos = Math.min(30000, segmentStartPos + dataEffectiveDecimateFactor);
+  const mutationProbs = { A: 0, T: 0, G: 0, C: 0 };
+  let validPositions = 0;
+  const refNucleotide = genomeSequence[segmentStartPos];
+  const refIndex = nucleotides.indexOf(refNucleotide);
+  if (refIndex === -1) return;
 
-    const mutationDetails = [];
-    decimatedLabels.forEach((label, idx) => {
-      const segmentStartPos = dataStartPosition + (idx * dataEffectiveDecimateFactor);
-      const segmentEndPos = Math.min(30000, segmentStartPos + dataEffectiveDecimateFactor);
-      const mutationProbs = { A: 0, T: 0, G: 0, C: 0 };
-      let validPositions = 0;
-      const refNucleotide = genomeSequence[segmentStartPos];
-      const refIndex = nucleotides.indexOf(refNucleotide);
-      if (refIndex === -1) return;
-      for (let absolutePos = segmentStartPos; absolutePos < segmentEndPos; absolutePos++) {
-        const dataAccessIndex = absolutePos;
-        if (dataAccessIndex < 0 || dataAccessIndex >= (genomeData[0]?.length || 0)) continue;
-        for (let targetIndex = 0; targetIndex < 4; targetIndex++) {
-            if (targetIndex !== refIndex) {
-                const targetNuc = nucleotides[targetIndex];
-                mutationProbs[targetNuc] += genomeData[targetIndex]?.[dataAccessIndex] || 0;
-            }
-        }
-        validPositions++;
+  for (let absolutePos = segmentStartPos; absolutePos < segmentEndPos; absolutePos++) {
+    if (absolutePos < 0 || absolutePos >= (genomeData[0]?.length || 0)) continue;
+    nucleotides.forEach((nuc, i) => {
+      if (i !== refIndex) {
+        mutationProbs[nuc] += genomeData[i]?.[absolutePos] || 0;
       }
-      if (validPositions > 0) { nucleotides.forEach(nuc => { mutationProbs[nuc] /= validPositions; }); }
-      const totalMutProb = nucleotides.filter(nuc => nuc !== refNucleotide).reduce((sum, nuc) => sum + mutationProbs[nuc], 0);
-      mutationDetails.push({ absolutePosition: segmentStartPos, refNuc: refNucleotide, mutations: { ...mutationProbs }, total: totalMutProb, });
     });
+    validPositions++;
+  }
+
+  if (validPositions > 0) {
+    nucleotides.forEach(nuc => { mutationProbs[nuc] /= validPositions; });
+  }
+
+  const totalMutProb = nucleotides
+    .filter(nuc => nuc !== refNucleotide)
+    .reduce((sum, nuc) => sum + mutationProbs[nuc], 0);
+
+  mutationDetails.push({ 
+    absolutePosition: segmentStartPos, 
+    refNuc: refNucleotide, 
+    mutations: { ...mutationProbs }, 
+    total: totalMutProb 
+  });
+});
     
     const mutationDatasets = [];
     nucleotides.forEach(targetNuc => {
@@ -470,15 +493,48 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     const filteredDatasets = mutationDatasets.filter(ds => ds.data.some(v => v > 0));
     const data = { labels: decimatedLabels, datasets: filteredDatasets };
 
+
     const options = {
       animation: false, responsive: true, maintainAspectRatio: false,
       scales: {
         x: { stacked: true, grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' }, ticks: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' } },
-        y: { stacked: true, type: 'logarithmic', min: 0.001, max: 1.0,title: {
-    display: true,
-    text: 'Mutation Probability (Log Scale)',
-    color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
-  }, ticks: { callback: (v) => { if (v===1) return '10⁰'; if (v===0.1) return '10⁻¹'; if (v===0.01) return '10⁻²'; if (v===0.001) return '10⁻³'; return ''; }, color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' }, grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } },
+        // y: { 
+        //   stacked: true, 
+        //   type: 'linear', 
+        //   min: 0, 
+        //   max: 1.0,
+        //   title: {
+        //     display: true,
+        //     text: 'Mutation Probability',
+        //     color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
+        //   }, 
+        //   ticks: { 
+        //     color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' 
+        //   }, 
+        //   grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
+        // },
+        y: { 
+          stacked: true, 
+          type: 'logarithmic', 
+          min: 0.00001, 
+          max: 1.0,
+          title: {
+            display: true,
+            text: 'Mutation Probability (Log Scale)',
+            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
+          }, 
+          ticks: { 
+            callback: (v) => { 
+              if (v===1) return '10⁰'; 
+              if (v===0.1) return '10⁻¹'; 
+              if (v===0.01) return '10⁻²'; 
+              if (v===0.001) return '10⁻³'; 
+              return ''; 
+            }, 
+            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' 
+          }, 
+          grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
+        },
       },
       plugins: {
         tooltip: {
@@ -539,7 +595,11 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
       },
     };
 
+    const initStart = performance.now(); // START CHART CONSTRUCTOR TIMER
     const chartInstance = new Chart(ctx, { type: "bar", data, options });
+    const initEnd = performance.now(); // END CHART CONSTRUCTOR TIMER
+    console.log(`[Timer] Chart.js constructor: ${(initEnd - initStart).toFixed(2)}ms`);
+
     chartInstance.mutationDetails = mutationDetails;
     chartRef.current.chartInstance = chartInstance;
     chartInstance.highResLoading = false;
@@ -553,9 +613,12 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
     } else if (!highResViewRange && !focusedProtein) {
         chartInstance.resetZoom();
     }
+
+    const endTimeFull = performance.now(); // END TOTAL TIMER
+    console.log(`[Timer] Total useEffect execution: ${(endTimeFull - startTimeFull).toFixed(2)}ms`);
     
     return () => { chartInstance.destroy(); };
-  }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange]);
+  }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange, normalizedData]);
 
   useEffect(() => {
     const chartInstance = chartRef.current?.chartInstance;

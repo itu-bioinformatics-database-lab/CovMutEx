@@ -21,6 +21,9 @@ genome_extractor/node_modules/
 genome_extractor/package*.json
 env/
 myvenv/
+.venv/
+.idea/
+genome_extractor/db.sqlite3
 
 # General ignores
 *.so
