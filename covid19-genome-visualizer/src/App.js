@@ -1,183 +1,192 @@
-import { useDispatch, useSelector } from "react-redux";
-import "./App.css";
-import {
-  loadNodesAndModels,
-  setDataset,
-  resetProteinRegion,
-} from "./features/genome/genomeSlice";
 import { useEffect, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
+import "./App.css";
+
+// Redux Actions & Slices
+import {
+  fetchPrediction,
+  resetProteinRegion,
+  loadNodesAndModels,
+} from "./features/genome/genomeSlice";
+
+// Components
 import Navbar from "./components/Navbar";
 import GenomeChart from "./components/Recharts";
 import DoughnutChart from "./components/DoughnutChart";
-import ZoomChart from "./components/Test";
-import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import Error from "./components/Error";
-import logo from "./CovMutexLogo-removebg-preview.png";
 import Contact from "./components/Contact";
 import Nav from "./components/Nav";
 import { About } from "./components/About";
- 
+import UploadModel from "./components/UploadModel";
+import BenchmarkDashboard from "./components/BenchmarkDashboard";
+import CompareModels from "./components/CompareModels";
+import ContextOverlay from "./components/ContextOverlay";
 
+// Assets
+import logo from "./CovMutexLogo-removebg-preview.png";
 
 function App() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const nodeIds = useSelector((state) => state.genome.nodeList);
-  const elapsedDay = useSelector((state) => state.genome.elapsedDay);
-  const selectedModel = useSelector((state) => state.genome.model);
-  const selectedProteinRegion = useSelector(
-    (state) => state.genome.selectedProteinRegion
-  );
-  const isSelected = useSelector((state) => state.genome.isSelected);
+  // --- REDUX SELECTORS ---
+  const {
+    genomeDataRaw,                    // [4][N] format for GenomeChart
+    dataset: genomeData,              // [{mutationPoss}] format for BarChart
+    genome: genomeSequence,
+    proteinMutationProbs: protein_mutation_probs,
+    selectedProteinRegion,
+    isSelected,
+    loading,
+  } = useSelector((state) => state.genome);
 
-  const [loading, setLoading] = useState(true);
-  const [dataLoading, setDataLoading] = useState(false);
-  const [genomeSequence, setGenomeSequence] = useState("");
-  const [genomeData, setGenomeData] = useState([]);
-  const [proteinRegionPossibilities, setProteinRegionPossibilities] = useState(
-    {}
-  );
-  const [protein_mutation_probs, setProteinMutationProbs] = useState({});
-  const API_URL = process.env.REACT_APP_API_URL;
+  // Context overlay params
+  const [contextNodeId, setContextNodeId] = useState("");
+  const [contextElapsedDay, setContextElapsedDay] = useState(60);
+  const [contextProteinRegion, setContextProteinRegion] = useState("");
 
-  // Reset `selectedProteinRegion` on navigation
+  // --- INITIAL DATA LOADING ---
+  useEffect(() => {
+    dispatch(loadNodesAndModels());
+  }, [dispatch]);
+
+  // --- ROUTING & LIFECYCLE ---
   useEffect(() => {
     if (location.pathname === "/") {
       dispatch(resetProteinRegion());
     }
   }, [location.pathname, dispatch]);
 
-  // Prevent page refresh
+  // Sayfa yenilemeyi önleme (Veri varken)
   useEffect(() => {
     const preventRefresh = (e) => {
-      if (isSelected || genomeData.length > 0) {
+      if (isSelected || (genomeData && genomeData.length > 0)) {
         e.preventDefault();
         e.returnValue = "";
       }
     };
-
     window.addEventListener("beforeunload", preventRefresh);
-
-    return () => {
-      window.removeEventListener("beforeunload", preventRefresh);
-    };
+    return () => window.removeEventListener("beforeunload", preventRefresh);
   }, [isSelected, genomeData]);
-//`${API_URL}/api/predict/`
-// In App.js
-const onSubmit = async (nodeId, elapsedDay, selectedModel, event) => {
-  setDataLoading(true);
-  try {
-    // === FETCH 1: Get data based on user selection (for specific calcs) ===
-    const response = await fetch(`${API_URL}/api/predict/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nodeId: nodeId || "default_node_id",
-        elapsedDay: elapsedDay ? Number(elapsedDay) : 0,
-        selectedModel: selectedModel || "default_model_path",
-        selectedProteinRegion: selectedProteinRegion || null,
-      }),
-    });
 
-    if (!response.ok) {
+  // --- HANDLERS ---
+  const handleNavbarSubmit = async (
+    nodeId,
+    elapsedDay,
+    selectedModel,
+    selectedProteinRegion
+  ) => {
+    const params = {
+      nodeId: nodeId || "default_node_id",
+      elapsedDay: elapsedDay ? Number(elapsedDay) : 0,
+      selectedModel: selectedModel || "balanced_data_model",
+      selectedProteinRegion: selectedProteinRegion || null,
+      isNewUpload: false,
+    };
+
+    // Store for context overlay
+    setContextNodeId(nodeId || "");
+    setContextElapsedDay(elapsedDay ? Number(elapsedDay) : 60);
+    setContextProteinRegion(selectedProteinRegion || "");
+
+    try {
+      await dispatch(fetchPrediction(params)).unwrap();
+      navigate("/genome-mutation-visualization");
+    } catch (error) {
+      console.error("Prediction failed:", error);
       navigate("/error", { replace: true });
-      return;
     }
-
-    const data = await response.json();
-
-    // Store protein-specific calculations from the first fetch
-    setProteinRegionPossibilities(data.proteinRegionPossibilities);
-    setProteinMutationProbs(data.protein_mutation_probs);
-
-    let finalGenomeData = data.genomeData;
-    let finalGenomeSequence = data.genomeSequence;
-
-    // === FETCH 2 (Conditional): If a region was selected, get the FULL genome ===
-    // This ensures our chart always has the complete, correct data source.
-    if (selectedProteinRegion) {
-      console.log("Region selected. Fetching full genome data for the chart...");
-      const fullGenomeResponse = await fetch(`${API_URL}/api/predict/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nodeId: nodeId || "default_node_id",
-          elapsedDay: elapsedDay ? Number(elapsedDay) : 0,
-          selectedModel: selectedModel || "default_model_path",
-          selectedProteinRegion: null, // Ask for the full genome
-        }),
-      });
-      const fullGenomeDataPayload = await fullGenomeResponse.json();
-      finalGenomeData = fullGenomeDataPayload.genomeData;
-      finalGenomeSequence = fullGenomeDataPayload.genomeSequence;
-      console.log("Full genome data received, length:", finalGenomeData[0].length);
-    }
-
-    // Now, save the GUARANTEED full data to state and Redux
-    setGenomeData(finalGenomeData);
-    setGenomeSequence(finalGenomeSequence);
-
-    dispatch(
-      setDataset({
-        dataset: finalGenomeData, // Pass the full dataset
-        genome: finalGenomeSequence, // Pass the full sequence
-        pr_poss: data.proteinRegionPossibilities,
-        isSelected: true, // Mark as selected
-        protein_mutation_probs: data.protein_mutation_probs,
-        selectedProteinRegion: selectedProteinRegion || null,
-      })
-    );
-
-    navigate("/genome-mutation-visualization");
-  } catch (error) {
-    console.error("Error during prediction:", error);
-    navigate("/error", { replace: true });
-  } finally {
-    setDataLoading(false);
-  }
-};
+  };
 
   return (
-    <div className="overflow-y-hidden">
+    <div className="overflow-y-hidden min-h-screen flex flex-col">
       <Nav />
+      
       <Routes>
+        {/* ANA SAYFA (Input Formu) */}
         <Route
           exact
           path="/"
-          element={<Navbar onNodeSelect={() => {}} onSubmit={onSubmit} />}
+          element={
+            <Navbar 
+              onNodeSelect={() => {}} 
+              onSubmit={handleNavbarSubmit} 
+              isLoading={loading}
+            />
+          }
         />
+
+        {/* HATA SAYFASI */}
         <Route path="/error" element={<Error />} />
+
+        {/* YENİ UPLOAD SAYFASI */}
+        <Route path="/upload-model" element={<UploadModel />} />
+
+        {/* BENCHMARK / COMPARISON SAYFASI */}
+        <Route path="/benchmark" element={<BenchmarkDashboard />} />
+
+        {/* VISUAL COMPARE SAYFASI */}
+        <Route path="/compare" element={<CompareModels />} />
+
+        {/* SONUÇ GÖRSELLEŞTİRME SAYFASI */}
         <Route
           exact
           path="/genome-mutation-visualization"
           element={
-            <div className="bg-[#f6f7f9] relative">
-              <h1 className="text-center pt-4 pb-0 font-bold text-xl">
+            <div className="bg-[#f6f7f9] relative min-h-screen">
+              {/* HEADER / LOGO */}
+              <h1 className="text-center pt-4 pb-0 font-bold text-xl text-gray-800">
                 Genome Sequence Mutation Visualization
               </h1>
-              <div className="absolute top-0 flex justify-center items-center ">
+              <div className="absolute top-0 flex justify-center items-center">
                 <img
                   src={logo}
                   className="w-[7rem] h-auto ml-[5.5rem]"
-                  alt="Covidmutext Logo"
+                  alt="CovMutEx Logo"
                 />
               </div>
-              <div className="block md:flex md:justify-normal">
-                {genomeData && genomeData.length > 0 && (
-                  <GenomeChart
-                    genomeData={genomeData}
-                    genomeSequence={genomeSequence}
-                  />
+
+              {/* LOADING INDICATOR */}
+              {loading && (
+                <div className="absolute inset-0 bg-white/80 z-50 flex items-center justify-center">
+                  <div className="text-xl font-semibold text-blue-600 animate-pulse">
+                    Calculating Predictions...
+                  </div>
+                </div>
+              )}
+
+              {/* CHARTS */}
+              <div className="block md:flex md:justify-normal p-4">
+                {/* GenomeChart uses genomeDataRaw which is [4][N] format */}
+                {genomeDataRaw && genomeDataRaw.length > 0 && (
+                  <div className="flex-1" style={{ height: "85vh", maxHeight: "85vh", overflow: "hidden" }}>
+                    <GenomeChart
+                      genomeData={genomeDataRaw}
+                      genomeSequence={genomeSequence}
+                    />
+                  </div>
                 )}
-                {!selectedProteinRegion && (
-                  <DoughnutChart data={protein_mutation_probs} />
+
+                {!selectedProteinRegion && protein_mutation_probs && (
+                  <div className="md:w-1/3 mt-8 md:mt-0 flex justify-center">
+                    <DoughnutChart data={protein_mutation_probs} />
+                  </div>
                 )}
               </div>
+
+              {/* FR-4: Context Overlay */}
+              <ContextOverlay
+                nodeId={contextNodeId}
+                elapsedDay={contextElapsedDay}
+                selectedProteinRegion={contextProteinRegion}
+              />
             </div>
           }
         />
+
+        {/* DİĞER SAYFALAR */}
         <Route exact path="/contact-us" element={<Contact />} />
         <Route exact path="/about" element={<About />} />
       </Routes>
