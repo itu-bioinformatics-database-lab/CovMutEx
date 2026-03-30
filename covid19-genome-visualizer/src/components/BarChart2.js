@@ -7,217 +7,148 @@ import { proteinRegionColorMap } from "../utils/proteinRegionColorMap";
 import { GrPowerReset } from "react-icons/gr";
 import { Button } from "@material-tailwind/react";
 import ZoomSlider from "./ZoomSlider";
+
 Chart.register(zoomPlugin);
+
 let nucleotides = { 0: "A", 1: "C", 2: "T", 3: "G" };
 
 function BarChart2({ data, seq }) {
-	const chartRef = useRef();
-	const dispatch = useDispatch();
-	const chartTitle = useSelector((state) => state.genome.chartTitle);
-	const isWholeSequenceSelected = useSelector(
-		(state) => state.genome.isWholeSequenceSelected
-	);
+    const chartRef = useRef();
+    const dispatch = useDispatch();
+    const chartTitle = useSelector((state) => state.genome.chartTitle);
+    const [_chart, setChart] = useState(null);
 
-	const [_chart, setChart] = useState(null);
-	const [click, setClick] = useState(false);
-	// const decimateData = (data, factor) => {
-	// 	console.log("dtaaaa", data);
-	// 	return data.reduce((acc, _, index) => {
-	// 		if (index % factor === 0) {
-	// 			const slice = data.slice(index, index + factor);
-	// 			const averaged = slice.reduce((avg, curr) => {
-	// 				Object.keys(curr.mutationPoss).forEach((key) => {
-	// 					avg[key] = (avg[key] || 0) + curr.mutationPoss[key] / factor;
-	// 				});
-	// 				return avg;
-	// 			}, {});
-	// 			acc.push({
-	// 				pos: index / factor,
-	// 				nucleotide: "",
-	// 				mutationPoss: averaged,
-	// 			});
-	// 		}
-	// 		return acc;
-	// 	}, []);
-	// };
-	const decimateData = (data, factor) => {
-		return data.map((dataset) =>
-			dataset.reduce((acc, curr, index) => {
-				if (index % factor === 0) {
-					const slice = dataset.slice(index, index + factor);
-					const sum = slice.reduce((sum, value) => sum + value, 0);
-					acc.push(sum / factor);
-				}
-				return acc;
-			}, [])
-		);
-	};
+    // --- GÜVENLİ DECIMATE ---
+    const decimateData = (data, factor) => {
+        // Eğer data yoksa veya boşsa, boş dataset yapısı dön
+        if (!data || !Array.isArray(data) || data.length === 0) return [[], [], [], []];
 
-	useEffect(() => {
-		const decimatedData = decimateData(data, 15); // Adjust factor as needed
-		const labels = seq.slice(0, decimatedData[0].length);
-		const label_indexes = labels.split("").map((_, idx) => idx);
-		console.log("lvlll", label_indexes);
-		// for (const row of data) {
-		// 	dataset.push(row.slice(0, 1000).map((num) => parseFloat(num)));
-		// }
-		// console.log("dataset:", dataset);
-		const currentChartRef = chartRef.current;
-		// const decimatedData = decimateData(data, 30); // Adjust factor as needed
+        const aggregated = [[], [], [], []];
 
-		let idx = -1;
-		const datasets = decimatedData.map((dataset, idx) => ({
-			label: nucleotides[idx],
-			data: dataset,
-			borderColor: getColorForNucleotide(nucleotides[idx]),
-			backgroundColor: getColorForNucleotide(nucleotides[idx]),
-		}));
-		console.log("datasets:", datasets);
-		console.log("labels", labels);
+        for (let i = 0; i < data.length; i += factor) {
+            const slice = data.slice(i, i + factor);
+            
+            const sums = [0, 0, 0, 0];
+            let count = 0;
 
-		if (currentChartRef) {
-			const ctx = currentChartRef.getContext("2d");
+            slice.forEach(item => {
+                // mutationPoss kontrolü
+                if (item && item.mutationPoss) {
+                    sums[0] += item.mutationPoss.A || 0;
+                    sums[1] += item.mutationPoss.C || 0;
+                    sums[2] += item.mutationPoss.T || 0;
+                    sums[3] += item.mutationPoss.G || 0;
+                    count++;
+                }
+            });
 
-			if (ctx) {
-				const chart = new Chart(ctx, {
-					type: "bar",
-					data: {
-						labels: label_indexes,
-						datasets: datasets,
-					},
-					options: {
-						animation: false,
-						scales: {
-							x: {
-								// id: "xAxis1",
-								// type: "category",
-								stacked: true,
-								// labels: labels,
-							},
+            if (count > 0) { 
+                 aggregated[0].push(sums[0] / count);
+                 aggregated[1].push(sums[1] / count);
+                 aggregated[2].push(sums[2] / count);
+                 aggregated[3].push(sums[3] / count);
+            } else {
+                // Veri yoksa 0 bas
+                aggregated[0].push(0);
+                aggregated[1].push(0);
+                aggregated[2].push(0);
+                aggregated[3].push(0);
+            }
+        }
+        return aggregated;
+    };
 
-							y: {
-								// beginAtZero: true,
-								stacked: true,
-								// max: 4,
-							},
-						},
-						// tooltips: {
-						// 	mode: "index",
-						// 	intersect: false,
-						// },
-						// hover: {
-						// 	mode: "index",
-						// 	intersect: false,
-						// },
-						responsive: true,
-						maintainAspectRatio: false,
-						plugins: {
-							zoom: {
-								zoom: {
-									wheel: {
-										enabled: true,
-									},
-									pinch: {
-										enabled: true,
-									},
-									mode: "x",
-								},
-								pan: {
-									enabled: true,
-									mode: "x",
-									onPan: () => {
-										console.log("panned");
-									},
-								},
-							},
-							title: {
-								display: true,
-								color: proteinRegionColorMap[chartTitle],
-								position: "bottom",
-								text: chartTitle,
-								font: {
-									size: 16,
-								},
-							},
-						},
-					},
-				});
-				setChart(chart);
+    useEffect(() => {
+        if (!data || !seq) return;
 
-				return () => chart.destroy();
-			}
-		}
-	}, [data, seq]);
+        const currentChartRef = chartRef.current;
+        const decimatedData = decimateData(data, 15); 
+        
+        // Etiketler (seq uzunluğu kontrol edilerek)
+        const labelsLength = decimatedData[0].length;
+        const labels = seq.slice(0, labelsLength).split(""); 
+        const label_indexes = labels.map((_, idx) => idx);
 
-	const handleReset = () => {
-		dispatch(resetChart());
-	};
+        const datasets = decimatedData.map((dataset, idx) => ({
+            label: nucleotides[idx],
+            data: dataset,
+            borderColor: getColorForNucleotide(nucleotides[idx]),
+            backgroundColor: getColorForNucleotide(nucleotides[idx]),
+        }));
 
-	const handleZoom = (zoomLevel) => {
-		console.log("zoom:", zoomLevel);
-		_chart.zoom(zoomLevel);
-	};
+        if (currentChartRef) {
+            if (_chart) _chart.destroy();
 
-	return (
-		<div className="flex">
-			<div className="flex items-center justify-center chart-container">
-				<ZoomSlider handleZoom={handleZoom} />
-			</div>
+            const ctx = currentChartRef.getContext("2d");
 
-			<div
-				className="chart-container"
-				style={{ height: "50vh", width: "60vw" }}
-			>
-				<div className=" ml-12">
-					<Button
-						color="blue"
-						variant="gradient"
-						type="submit"
-						className="flex gap-2 justify-center items-center"
-						onClick={handleReset}
-					>
-						<div>Reset Chart</div>
-						<GrPowerReset size={20} color="white" />
-					</Button>
-				</div>
+            if (ctx) {
+                const chart = new Chart(ctx, {
+                    type: "bar",
+                    data: {
+                        labels: label_indexes,
+                        datasets: datasets,
+                    },
+                    options: {
+                        animation: false,
+                        scales: { x: { stacked: true }, y: { stacked: true } },
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            zoom: {
+                                zoom: {
+                                    wheel: { enabled: true },
+                                    pinch: { enabled: true },
+                                    mode: "x",
+                                },
+                                pan: { enabled: true, mode: "x" },
+                            },
+                            title: {
+                                display: true,
+                                color: proteinRegionColorMap[chartTitle] || "#000000",
+                                position: "bottom",
+                                text: chartTitle || "Genome Mutation Risk",
+                                font: { size: 16 },
+                            },
+                        },
+                    },
+                });
+                setChart(chart);
+                return () => chart.destroy();
+            }
+        }
+    // eslint-disable-next-line
+    }, [data, seq, chartTitle]);
 
-				<canvas ref={chartRef} />
-				{/* <div className="flex">
-				<button
-					className="border-4 border-gray-400 m-2 p-2"
-					onClick={(e) => {
-						console.log(_chart);
-						_chart.zoom(1.1);
-					}}
-				>
-					{" "}
-					+
-				</button>
-				<button
-					className="border-4 border-gray-400 m-2 p-2"
-					onClick={(e) => {
-						console.log(_chart);
-						_chart.zoom(0.9);
-					}}
-				>
-					{" "}
-					-
-				</button>
-			</div> */}
-			</div>
-		</div>
-	);
+    const handleReset = () => {
+        dispatch(resetChart());
+        if (_chart) _chart.resetZoom();
+    };
+
+    const handleZoom = (zoomLevel) => {
+        if (_chart) _chart.zoom(zoomLevel);
+    };
+
+    return (
+        <div className="flex">
+            <div className="flex items-center justify-center chart-container">
+                <ZoomSlider handleZoom={handleZoom} />
+            </div>
+            <div className="chart-container" style={{ height: "50vh", width: "60vw" }}>
+                <div className="ml-12 mb-2">
+                    <Button color="blue" variant="gradient" className="flex gap-2 justify-center items-center" onClick={handleReset}>
+                        <div>Reset Chart</div>
+                        <GrPowerReset size={20} color="white" />
+                    </Button>
+                </div>
+                <canvas ref={chartRef} />
+            </div>
+        </div>
+    );
 }
 
 function getColorForNucleotide(nucleotide) {
-	const colorMap = {
-		A: "#FF5733",
-		C: "#3399FF",
-		T: "#33CC33",
-		G: "#9966FF",
-	};
-
-	return colorMap[nucleotide] || "#000000";
+    const colorMap = { A: "#FF5733", C: "#3399FF", T: "#33CC33", G: "#9966FF" };
+    return colorMap[nucleotide] || "#000000";
 }
 
 export default BarChart2;
