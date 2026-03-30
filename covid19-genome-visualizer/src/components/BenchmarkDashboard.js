@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import Chart from "chart.js/auto";
 import { useRef } from "react";
+import { modelList as staticModels } from "../data/modelList";
 import {
   MdCompareArrows,
   MdArrowBack,
@@ -314,12 +315,22 @@ const BenchmarkDashboard = () => {
         if (res.ok) {
           const data = await res.json();
           const models = [];
-          (data.server_models || []).forEach((m) => models.push({ name: m, value: m, type: "server" }));
-          (data.uploaded_models || []).forEach((m) => models.push({
-            name: `${m.folder_name} (Uploaded)`,
-            value: `uploaded:${m.folder_name}`,
-            type: "uploaded",
-          }));
+
+          // Server models from shared static list
+          staticModels.forEach((m) => {
+            models.push({ name: m.name, value: m.path, type: "server" });
+          });
+
+          // Uploaded models from API
+          const uploaded = data.available_models || [];
+          const serverNames = staticModels.map((m) => m.path);
+          uploaded.forEach((m) => {
+            const name = typeof m === "string" ? m : m.folder_name || m.name;
+            if (name && !serverNames.includes(name)) {
+              models.push({ name: `${name} (Uploaded)`, value: `uploaded:${name}`, type: "uploaded" });
+            }
+          });
+
           setAvailableModels(models);
         }
       } catch (err) {

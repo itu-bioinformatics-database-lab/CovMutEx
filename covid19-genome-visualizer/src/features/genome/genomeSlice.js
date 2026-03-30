@@ -414,41 +414,4 @@ export const {
   resetState,
 } = genomeSlice.actions;
 
-export const submitForm =
-  (nodeId, elapsedDay, selectedModel, selectedProteinRegion) =>
-  async (dispatch) => {
-    try {
-     
-      dispatch(setLoading(true));
-      const API_URL = process.env.REACT_APP_API_URL;
-
-      const response = await axios.post( `${API_URL}/api/predict/`, {
-        nodeId,
-        elapsedDay,
-        selectedModel,
-        selectedProteinRegion,
-      });
-
-      const { dataset, genome, pr_poss } = response.data;
-      const isSelected = Boolean(selectedProteinRegion);
-      
-
-      
-
-      dispatch(
-        setDataset({
-          dataset,
-          genome,
-          pr_poss,
-          isSelected,
-          selectedProteinRegion,
-        })
-      );
-    } catch (error) {
-      console.error("Error in form submission:", error);
-    } finally {
-      dispatch(setLoading(false));
-    }
-  };
-
 export default genomeSlice.reducer;

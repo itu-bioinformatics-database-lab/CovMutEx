@@ -21,7 +21,6 @@ import { About } from "./components/About";
 import UploadModel from "./components/UploadModel";
 import BenchmarkDashboard from "./components/BenchmarkDashboard";
 import CompareModels from "./components/CompareModels";
-import ContextOverlay from "./components/ContextOverlay";
 
 // Assets
 import logo from "./CovMutexLogo-removebg-preview.png";
@@ -41,11 +40,6 @@ function App() {
     isSelected,
     loading,
   } = useSelector((state) => state.genome);
-
-  // Context overlay params
-  const [contextNodeId, setContextNodeId] = useState("");
-  const [contextElapsedDay, setContextElapsedDay] = useState(60);
-  const [contextProteinRegion, setContextProteinRegion] = useState("");
 
   // --- INITIAL DATA LOADING ---
   useEffect(() => {
@@ -85,11 +79,6 @@ function App() {
       selectedProteinRegion: selectedProteinRegion || null,
       isNewUpload: false,
     };
-
-    // Store for context overlay
-    setContextNodeId(nodeId || "");
-    setContextElapsedDay(elapsedDay ? Number(elapsedDay) : 60);
-    setContextProteinRegion(selectedProteinRegion || "");
 
     try {
       await dispatch(fetchPrediction(params)).unwrap();
@@ -175,13 +164,6 @@ function App() {
                   </div>
                 )}
               </div>
-
-              {/* FR-4: Context Overlay */}
-              <ContextOverlay
-                nodeId={contextNodeId}
-                elapsedDay={contextElapsedDay}
-                selectedProteinRegion={contextProteinRegion}
-              />
             </div>
           }
         />

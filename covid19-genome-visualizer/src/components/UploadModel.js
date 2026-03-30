@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { nodeIds as staticNodes } from "../data/nodeIds";
-import { modelList as staticModels } from "../data/modelList";
 import {
   fetchPrediction,
   fetchAvailableModels,
@@ -14,26 +13,23 @@ import {
   MdArrowBack,
   MdPlayArrow,
   MdSettings,
-  MdCheckCircle,
-  MdInfo,
 } from "react-icons/md";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 const DEFAULT_NODE_ID = "USA/UT-UPHL-210820924226/2021|OK040008.1|2021-08-07";
+const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 /**
  * UploadModel Component
  * 
  * Standalone page for uploading new models and running predictions.
  * Supports both new uploads and existing model selection.
- * Parameters support: required flag, default value, and editable value.
  */
 const UploadModel = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
   // Redux state
-  const { loading, error } = useSelector((state) => state.genome);
+  const { loading, availableModels, error } = useSelector((state) => state.genome);
 
   // Tab state
   const [activeTab, setActiveTab] = useState("upload");
@@ -45,9 +41,6 @@ const UploadModel = () => {
 
   // Existing model fields
   const [selectedModel, setSelectedModel] = useState("balanced_data_model");
-  const [existingModelList, setExistingModelList] = useState([]);
-  const [existingModelParams, setExistingModelParams] = useState([]);
-  const [paramsLoading, setParamsLoading] = useState(false);
 
   // Upload fields
   const [uploadName, setUploadName] = useState("");
@@ -55,119 +48,23 @@ const UploadModel = () => {
   const [extractorFile, setExtractorFile] = useState(null);
   const [helperFiles, setHelperFiles] = useState([]);
   const [customParams, setCustomParams] = useState([
-    { key: "batch_size", value: "32", required: false },
+    { key: "batch_size", value: "32" },
   ]);
 
   // UI state
   const [uploadError, setUploadError] = useState("");
-  const [uploadSuccess, setUploadSuccess] = useState("");
 
-  // ============================================
-  // FETCH MODELS LIST
-  // ============================================
-  const fetchModelsList = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/models/`);
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Server models
-        const serverModels = (data.server_models || []).map((name) => ({
-          name,
-          value: name,
-          type: "server",
-        }));
-
-        // Uploaded models
-        const uploadedModels = (data.uploaded_models || []).map((m) => ({
-          name: `${m.folder_name} (Uploaded)`,
-          value: `uploaded:${m.folder_name}`,
-          type: "uploaded",
-          hasParams: m.has_parameters,
-          hasExtractor: m.has_extractor,
-        }));
-
-        setExistingModelList([...serverModels, ...uploadedModels]);
-      }
-    } catch (err) {
-      console.warn("Could not fetch models:", err.message);
-      // Fallback to static models
-      setExistingModelList(
-        staticModels.map((m) => ({
-          name: m.name,
-          value: m.path,
-          type: "server",
-        }))
-      );
-    }
-  }, []);
-
+  // Fetch available models on mount
   useEffect(() => {
-    fetchModelsList();
     dispatch(fetchAvailableModels());
-  }, [dispatch, fetchModelsList]);
+  }, [dispatch]);
 
   // ============================================
-  // FETCH PARAMETERS WHEN EXISTING MODEL CHANGES
+  // HANDLERS
   // ============================================
-  useEffect(() => {
-    const fetchParams = async () => {
-      if (!selectedModel || !selectedModel.startsWith("uploaded:")) {
-        setExistingModelParams([]);
-        return;
-      }
 
-      setParamsLoading(true);
-      try {
-        const modelName = selectedModel.replace("uploaded:", "");
-        const response = await fetch(
-          `${API_URL}/api/model-parameters/?model_name=${encodeURIComponent(modelName)}`
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          const params = data.parameters || {};
-
-          const paramsArray = Object.entries(params).map(([key, val]) => {
-            if (typeof val === "object" && val !== null) {
-              return {
-                key,
-                value: String(val.value ?? val.default ?? ""),
-                required: val.required || false,
-                default: val.default !== undefined ? String(val.default) : "",
-              };
-            } else {
-              return {
-                key,
-                value: String(val),
-                required: false,
-                default: String(val),
-              };
-            }
-          });
-
-          setExistingModelParams(paramsArray);
-        } else {
-          setExistingModelParams([]);
-        }
-      } catch (err) {
-        console.warn("Could not fetch model parameters:", err);
-        setExistingModelParams([]);
-      } finally {
-        setParamsLoading(false);
-      }
-    };
-
-    if (activeTab === "existing") {
-      fetchParams();
-    }
-  }, [selectedModel, activeTab]);
-
-  // ============================================
-  // UPLOAD PARAMETER HANDLERS
-  // ============================================
   const addParam = () => {
-    setCustomParams([...customParams, { key: "", value: "", required: false }]);
+    setCustomParams([...customParams, { key: "", value: "" }]);
   };
 
   const removeParam = (index) => {
@@ -182,104 +79,82 @@ const UploadModel = () => {
     setCustomParams(list);
   };
 
-  // ============================================
-  // EXISTING MODEL PARAMETER HANDLERS
-  // ============================================
-  const updateExistingParam = (index, newValue) => {
-    const updated = [...existingModelParams];
-    updated[index].value = newValue;
-    setExistingModelParams(updated);
-  };
-
-  const resetExistingParam = (index) => {
-    const updated = [...existingModelParams];
-    updated[index].value = updated[index].default || "";
-    setExistingModelParams(updated);
-  };
-
   const handleHelperFilesChange = (e) => {
     if (e.target.files) {
       setHelperFiles(Array.from(e.target.files));
     }
   };
 
-  // ============================================
-  // SUBMIT HANDLER
-  // ============================================
   const handleSubmit = async (e) => {
     e.preventDefault();
     setUploadError("");
-    setUploadSuccess("");
+
+    // Build parameters object
+    const paramsObj = {};
+    customParams.forEach((item) => {
+      if (item.key.trim()) {
+        const isNum = !isNaN(item.value) && item.value.trim() !== "";
+        paramsObj[item.key.trim()] = isNum ? parseFloat(item.value) : item.value;
+      }
+    });
 
     let params = {
       nodeId: nodeId || DEFAULT_NODE_ID,
       elapsedDay: Number(elapsedDay) || 60,
       selectedProteinRegion: selectedProteinRegion || null,
+      customParameters: paramsObj,
     };
 
     if (activeTab === "existing") {
-      // Validate required parameters for existing model
-      const missingRequired = existingModelParams.filter(
-        (p) => p.required && (!p.value || p.value.trim() === "")
-      );
-      if (missingRequired.length > 0) {
-        setUploadError(
-          `Please fill required parameters: ${missingRequired.map((p) => p.key).join(", ")}`
-        );
-        return;
-      }
-
-      // Build custom parameters object
-      const paramsObj = {};
-      existingModelParams.forEach((item) => {
-        if (item.key.trim()) {
-          const isNum = !isNaN(item.value) && item.value.trim() !== "";
-          paramsObj[item.key.trim()] = isNum ? parseFloat(item.value) : item.value;
-        }
-      });
-
+      // Using existing model
       params.selectedModel = selectedModel;
       params.isNewUpload = false;
-      params.customParameters = paramsObj;
     } else {
-      // Upload tab
+      // Uploading new model
       if (!uploadName.trim() || !modelFile) {
         setUploadError("Please provide a Model Name and Model File.");
         return;
       }
-
-      // Build custom parameters with {value, required, default} structure
-      const paramsObj = {};
-      customParams.forEach((item) => {
-        if (item.key.trim()) {
-          const rawValue = item.value.trim();
-          const numericValue = !isNaN(rawValue) && rawValue !== "" ? parseFloat(rawValue) : rawValue;
-          paramsObj[item.key.trim()] = {
-            value: numericValue,
-            required: item.required || false,
-            default: rawValue,
-          };
-        }
-      });
 
       params.isNewUpload = true;
       params.uploadName = uploadName.trim();
       params.modelFile = modelFile;
       params.extractorFile = extractorFile;
       params.helperFiles = helperFiles;
-      params.customParameters = paramsObj;
     }
 
     try {
-      await dispatch(fetchPrediction(params)).unwrap();
-      
-      if (activeTab === "upload") {
-        setUploadSuccess(`Model "${uploadName}" uploaded successfully!`);
-        // Refresh model list
-        await fetchModelsList();
+      if (activeTab === "existing") {
+        // Existing model → run prediction and show chart
+        await dispatch(fetchPrediction(params)).unwrap();
+        navigate("/genome-mutation-visualization");
+      } else {
+        // New upload → save model via predict endpoint, ignore prediction result, go home
+        const formData = new FormData();
+        formData.append("uploadFolderName", params.uploadName.replace(/\s+/g, "_"));
+        formData.append("modelFile", params.modelFile);
+        formData.append("nodeId", params.nodeId);
+        formData.append("elapsedDay", String(params.elapsedDay));
+        if (params.extractorFile) formData.append("extractorFile", params.extractorFile);
+        if (params.helperFiles) {
+          params.helperFiles.forEach((file, i) => {
+            formData.append(`helperFile_${i}`, file);
+            formData.append(`helperFileName_${i}`, file.name);
+          });
+        }
+        if (params.customParameters && Object.keys(params.customParameters).length > 0) {
+          formData.append("customParameters", JSON.stringify(params.customParameters));
+        }
+
+        const response = await fetch(`${API_URL}/api/predict/`, {
+          method: "POST",
+          body: formData,
+        });
+
+        // Whether prediction succeeded or failed, model is saved
+        // Navigate home without showing prediction chart
+        navigate("/");
       }
-      
-      navigate("/genome-mutation-visualization");
     } catch (err) {
       console.error("Prediction/Upload failed:", err);
       setUploadError(err.message || "Operation failed. Please try again.");
@@ -339,13 +214,7 @@ const UploadModel = () => {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
-            {/* Messages */}
-            {uploadSuccess && (
-              <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 flex items-center gap-2">
-                <MdCheckCircle size={20} />
-                {uploadSuccess}
-              </div>
-            )}
+            {/* Error Message */}
             {uploadError && (
               <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
                 {uploadError}
@@ -486,12 +355,11 @@ const UploadModel = () => {
                   )}
                 </div>
 
-                {/* Custom Parameters for Upload */}
+                {/* Custom Parameters */}
                 <div>
                   <div className="flex justify-between items-center mb-2">
-                    <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                    <label className="text-sm font-medium text-gray-700">
                       Custom Parameters
-                      <MdInfo className="text-gray-400" title="Define parameters users must fill when using this model" />
                     </label>
                     <button
                       type="button"
@@ -503,35 +371,21 @@ const UploadModel = () => {
                   </div>
                   <div className="space-y-2">
                     {customParams.map((item, index) => (
-                      <div key={index} className="flex gap-2 items-center bg-gray-50 p-3 rounded-lg">
-                        {/* Key */}
+                      <div key={index} className="flex gap-2">
                         <input
                           type="text"
-                          placeholder="Key (e.g., batch_size)"
+                          placeholder="Key"
                           value={item.key}
                           onChange={(e) => updateParam(index, "key", e.target.value)}
                           className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         />
-                        {/* Default Value */}
                         <input
                           type="text"
-                          placeholder="Default Value"
+                          placeholder="Value"
                           value={item.value}
                           onChange={(e) => updateParam(index, "value", e.target.value)}
                           className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         />
-                        {/* Required Toggle */}
-                        <label className="flex items-center gap-1.5 text-xs whitespace-nowrap cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={item.required}
-                            onChange={(e) => updateParam(index, "required", e.target.checked)}
-                            className="rounded border-gray-300 text-green-600 focus:ring-green-500"
-                          />
-                          <span className={item.required ? "text-red-600 font-bold" : "text-gray-500"}>
-                            Required
-                          </span>
-                        </label>
                         {customParams.length > 1 && (
                           <button
                             type="button"
@@ -544,9 +398,6 @@ const UploadModel = () => {
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Parameters marked "Required" must be filled before running predictions with this model.
-                  </p>
                 </div>
               </div>
             )}
@@ -556,7 +407,6 @@ const UploadModel = () => {
             {/* ============================================ */}
             {activeTab === "existing" && (
               <div className="space-y-4">
-                {/* Model Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Select Model
@@ -566,112 +416,20 @@ const UploadModel = () => {
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    {existingModelList.map((model, idx) => (
-                      <option key={idx} value={model.value}>
-                        {model.name}
-                        {model.type === "uploaded" && model.hasParams ? " ⚙️" : ""}
+                    <option value="balanced_data_model">balanced_data_model (Default)</option>
+                    <option value="model_for_1k">model_for_1k</option>
+                    <option value="model_for_5k">model_for_5k</option>
+                    {/* Uploaded models from API */}
+                    {availableModels && availableModels.map((model, idx) => (
+                      <option key={idx} value={`uploaded:${model}`}>
+                        {model} (Uploaded)
                       </option>
                     ))}
                   </select>
-                  {selectedModel && selectedModel.startsWith("uploaded:") && (
-                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                      <MdCheckCircle size={12} /> Uploaded model selected
-                    </p>
-                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    For uploaded models, use format: <code className="bg-gray-100 px-1 rounded">uploaded:FolderName</code>
+                  </p>
                 </div>
-
-                {/* Parameters Loading */}
-                {paramsLoading && (
-                  <div className="text-center py-4">
-                    <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent mx-auto"></div>
-                    <p className="text-xs text-gray-500 mt-2">Loading model parameters...</p>
-                  </div>
-                )}
-
-                {/* Model Parameters for Existing Model */}
-                {!paramsLoading && existingModelParams.length > 0 && (
-                  <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100">
-                    <div className="flex items-center gap-2 mb-3">
-                      <MdSettings className="text-blue-500" />
-                      <label className="text-sm font-bold text-blue-800 uppercase">
-                        Model Parameters
-                      </label>
-                    </div>
-                    <div className="space-y-3">
-                      {existingModelParams.map((item, index) => (
-                        <div
-                          key={index}
-                          className={`bg-white p-3 rounded-lg border ${
-                            item.required
-                              ? item.value && item.value.trim() !== ""
-                                ? "border-green-200"
-                                : "border-red-300 bg-red-50/30"
-                              : "border-gray-200"
-                          } shadow-sm transition-colors`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-bold text-gray-700 uppercase flex items-center gap-1">
-                              {item.key}
-                              {item.required ? (
-                                <span className="text-red-500 text-[10px] font-bold bg-red-50 px-1 rounded">
-                                  REQUIRED
-                                </span>
-                              ) : (
-                                <span className="text-gray-400 text-[10px] font-normal bg-gray-50 px-1 rounded">
-                                  optional
-                                </span>
-                              )}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              {item.default && (
-                                <span className="text-xs text-gray-400">
-                                  Default: {item.default}
-                                </span>
-                              )}
-                              {item.default && item.value !== item.default && (
-                                <button
-                                  type="button"
-                                  onClick={() => resetExistingParam(index)}
-                                  className="text-xs text-blue-500 hover:text-blue-700 underline"
-                                >
-                                  Reset
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          <input
-                            type="text"
-                            className={`w-full text-sm font-medium text-gray-800 border rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                              item.required && (!item.value || item.value.trim() === "")
-                                ? "border-red-300 bg-red-50"
-                                : "border-gray-200"
-                            }`}
-                            value={item.value}
-                            onChange={(e) => updateExistingParam(index, e.target.value)}
-                            placeholder={
-                              item.required
-                                ? `Required (default: ${item.default || "none"})`
-                                : `Optional (default: ${item.default || "none"})`
-                            }
-                            required={item.required}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* No parameters info */}
-                {!paramsLoading &&
-                  selectedModel &&
-                  selectedModel.startsWith("uploaded:") &&
-                  existingModelParams.length === 0 && (
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 text-center">
-                      <p className="text-xs text-gray-500">
-                        This model has no custom parameters.
-                      </p>
-                    </div>
-                  )}
               </div>
             )}
 

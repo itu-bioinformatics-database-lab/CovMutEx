@@ -420,6 +420,7 @@ def run_benchmark(
                 protein_regions=protein_regions,
                 selected_protein_region=selected_protein_region,
                 custom_parameters=config.get('custom_parameters', {}),
+                extractor_path=config.get('extractor_path'),
             )
             
             end_time = time.time()

@@ -38,6 +38,7 @@ PROTEIN_REGIONS = {
 }
 
 def resolve_model_path(model_identifier):
+    """Resolve model identifier to path, name, source, extractor_path, and custom_parameters."""
     if model_identifier.startswith('uploaded:'):
         folder_name = model_identifier.replace('uploaded:', '')
         folder_path = os.path.join(UPLOADED_MODELS_DIR, folder_name)
@@ -55,6 +56,13 @@ def resolve_model_path(model_identifier):
                     break
         if not model_path:
             raise FileNotFoundError(f"No model file in: {folder_name}")
+        
+        # Check for custom extractor
+        extractor_path = os.path.join(folder_path, 'feature_extractor.py')
+        if not os.path.exists(extractor_path):
+            extractor_path = None
+        
+        # Load custom parameters
         params = {}
         params_file = os.path.join(folder_path, 'custom_parameters.json')
         if os.path.exists(params_file):
@@ -62,7 +70,11 @@ def resolve_model_path(model_identifier):
                 raw = json.load(f)
                 for k, v in raw.items():
                     params[k] = v['value'] if isinstance(v, dict) and 'value' in v else v
-        return {'path': model_path, 'name': folder_name, 'source': 'uploaded', 'custom_parameters': params}
+        
+        return {
+            'path': model_path, 'name': folder_name, 'source': 'uploaded',
+            'custom_parameters': params, 'extractor_path': extractor_path,
+        }
     else:
         model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'covid19_models', 'models')
         model_path = os.path.join(model_dir, f"{model_identifier}.keras")
@@ -74,12 +86,24 @@ def resolve_model_path(model_identifier):
                     break
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Server model not found: {model_identifier}")
-        return {'path': model_path, 'name': model_identifier, 'source': 'server', 'custom_parameters': {}}
+        return {
+            'path': model_path, 'name': model_identifier, 'source': 'server',
+            'custom_parameters': {}, 'extractor_path': None,
+        }
 
 def run_single_prediction(model_path, model_name, source, node_id, elapsed_day,
-    mutations, genome_sequence, protein_regions, selected_protein_region=None, custom_parameters=None):
+    mutations, genome_sequence, protein_regions, selected_protein_region=None,
+    custom_parameters=None, extractor_path=None):
+    """Run prediction using the plugin architecture — uses uploaded extractor when available."""
     model_wrapper = load_covmutex_model(model_path=model_path, model_name=model_name, source=source)
-    extractor = load_feature_extractor(extractor_type='default')
+    
+    # Use uploaded extractor if available, otherwise default
+    if extractor_path and os.path.exists(extractor_path):
+        print(f"[BENCHMARK] Using uploaded extractor: {extractor_path}")
+        extractor = load_feature_extractor(extractor_type='uploaded', module_path=extractor_path)
+    else:
+        extractor = load_feature_extractor(extractor_type='default')
+    
     pr_dict = {}
     if selected_protein_region and selected_protein_region in protein_regions:
         pr_dict = {selected_protein_region: protein_regions[selected_protein_region]}
