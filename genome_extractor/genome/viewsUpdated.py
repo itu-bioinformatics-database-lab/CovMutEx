@@ -309,9 +309,10 @@ def get_model_parameters(request):
         if not os.path.exists(params_file):
             return JsonResponse(
                 {
-                    "error": f'custom_parameters.json not found for model "{model_name}"',
-                    "model_dir": model_dir,
-                    "hint": "This model was uploaded without custom parameters or the file is missing",
+                    "model_name": model_name,
+                    "hint": "This model was uploaded without custom parameters or the file is missing.",
+                    "parameters": {},
+                    "status": "success"
                 },
                 status=404,
             )
