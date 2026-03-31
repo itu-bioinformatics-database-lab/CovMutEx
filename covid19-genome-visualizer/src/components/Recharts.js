@@ -93,9 +93,10 @@ Chart.register(
 );
 
 
-const GenomeChart = ({ genomeData, genomeSequence }) => {
+const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange }) => {
   const chartRef = useRef(null);
   const viewRangeToPreserve = useRef(null);
+  const isSyncingZoom = useRef(false);
   const [activeProtein, setActiveProtein] = useState(null);
   const [showFullAnnotation, setShowFullAnnotation] = useState(false);
   const [weblogoLoading, setWeblogoLoading] = useState(false);
@@ -563,6 +564,11 @@ decimatedLabels.forEach((label, idx) => {
                 const minGenomePos = startOffset + (minIndex * effectiveDecimate);
                 const maxGenomePos = startOffset + (maxIndex * effectiveDecimate);
                 const newZoomLevel = maxGenomePos - minGenomePos;
+                // Emit zoom sync event (skip if this zoom was triggered by sync)
+                if (onZoomSync && !isSyncingZoom.current) {
+                    onZoomSync({ min: minGenomePos, max: maxGenomePos });
+                }
+                isSyncingZoom.current = false;
                 if (chart.weblogoMode && newZoomLevel > zoomLevel) { updateBarChart(chart); setZoomLevel(WEBLOGO_THRESHOLD * 1.2); return; }
                 setZoomLevel(newZoomLevel);
                 if (newZoomLevel <= HIGH_DETAIL_THRESHOLD && !highResViewRange) {
@@ -574,7 +580,7 @@ decimatedLabels.forEach((label, idx) => {
                         let newMax = Math.min(maxB, newMin + range);
                         setHighResViewRange({ min: newMin, max: newMax });
                     }, 0);
-                    return; 
+                    return;
                 }
                 if (newZoomLevel > HIGH_DETAIL_THRESHOLD && highResViewRange) {
                     const newRange = ZOOM_OUT_FIXED_BAR_COUNT * 25; const center = (minGenomePos + maxGenomePos) / 2;
@@ -592,7 +598,20 @@ decimatedLabels.forEach((label, idx) => {
                 }
             }
           },
-          pan: { enabled: true, mode: "x" },
+          pan: {
+            enabled: true, mode: "x",
+            onPanComplete: ({ chart }) => {
+              if (onZoomSync && !isSyncingZoom.current) {
+                let startOffset = highResViewRange ? highResViewRange.min : chartViewData.offsetForView;
+                const effectiveDecimate = highResViewRange ? 1 : currentDecimateFactor;
+                const { min: minIndex, max: maxIndex } = chart.scales.x;
+                const minGenomePos = startOffset + (minIndex * effectiveDecimate);
+                const maxGenomePos = startOffset + (maxIndex * effectiveDecimate);
+                onZoomSync({ min: minGenomePos, max: maxGenomePos });
+              }
+              isSyncingZoom.current = false;
+            },
+          },
         },
         annotation: { annotations: createAnnotations(), },
       },
@@ -630,6 +649,20 @@ decimatedLabels.forEach((label, idx) => {
       chartInstance.update();
     }
   }, [activeProtein, showFullAnnotation]);
+
+  // Apply incoming zoom sync from other charts
+  useEffect(() => {
+    if (!syncZoomRange || !chartRef.current?.chartInstance) return;
+    const chart = chartRef.current.chartInstance;
+    const startOffset = highResViewRange ? highResViewRange.min : chartViewData.offsetForView;
+    const effectiveDecimate = highResViewRange ? 1 : currentDecimateFactor;
+    const minIndex = (syncZoomRange.min - startOffset) / effectiveDecimate;
+    const maxIndex = (syncZoomRange.max - startOffset) / effectiveDecimate;
+    isSyncingZoom.current = true;
+    chart.options.scales.x.min = Math.max(0, minIndex);
+    chart.options.scales.x.max = maxIndex;
+    chart.update('none');
+  }, [syncZoomRange]);
 
   const handleProteinHover = (protein) => setActiveProtein(protein);
   const handleProteinLeave = () => setActiveProtein(null);

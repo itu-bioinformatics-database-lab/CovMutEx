@@ -21,29 +21,42 @@ const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 // Color palette for models
 const MODEL_COLORS = [
-  { bg: "rgba(59, 130, 246, 0.7)", border: "#3B82F6", light: "#EFF6FF" },   // Blue
-  { bg: "rgba(239, 68, 68, 0.7)", border: "#EF4444", light: "#FEF2F2" },    // Red
-  { bg: "rgba(16, 185, 129, 0.7)", border: "#10B981", light: "#ECFDF5" },   // Green
-  { bg: "rgba(245, 158, 11, 0.7)", border: "#F59E0B", light: "#FFFBEB" },   // Amber
-  { bg: "rgba(139, 92, 246, 0.7)", border: "#8B5CF6", light: "#F5F3FF" },   // Purple
+  { bg: "rgba(59, 130, 246, 0.7)", border: "#3B82F6", light: "#EFF6FF" },
+  { bg: "rgba(239, 68, 68, 0.7)", border: "#EF4444", light: "#FEF2F2" },
+  { bg: "rgba(16, 185, 129, 0.7)", border: "#10B981", light: "#ECFDF5" },
+  { bg: "rgba(245, 158, 11, 0.7)", border: "#F59E0B", light: "#FFFBEB" },
+  { bg: "rgba(139, 92, 246, 0.7)", border: "#8B5CF6", light: "#F5F3FF" },
 ];
 
 // ============================================
-// METRIC CARD COMPONENT
+// COLLAPSIBLE SECTION
 // ============================================
-const MetricCard = ({ label, value, unit, best, colorClass }) => (
-  <div className={`p-3 rounded-lg border ${best ? "border-green-300 bg-green-50" : "border-gray-200 bg-white"} transition-all`}>
-    <p className="text-xs text-gray-500 uppercase font-semibold">{label}</p>
-    <p className={`text-lg font-bold ${colorClass || "text-gray-800"}`}>
-      {value !== null && value !== undefined ? (typeof value === "number" ? value.toFixed(4) : value) : "N/A"}
-    </p>
-    {unit && <p className="text-xs text-gray-400">{unit}</p>}
-    {best && <span className="text-xs text-green-600 font-bold">★ Best</span>}
-  </div>
-);
+const Section = ({ title, icon, children, defaultOpen = true, badge }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          {icon}
+          <h3 className="font-bold text-gray-800 text-sm">{title}</h3>
+          {badge && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">
+              {badge}
+            </span>
+          )}
+        </div>
+        {open ? <MdExpandLess className="text-gray-400" /> : <MdExpandMore className="text-gray-400" />}
+      </button>
+      {open && <div className="px-5 pb-4">{children}</div>}
+    </div>
+  );
+};
 
 // ============================================
-// CALIBRATION CHART COMPONENT
+// CALIBRATION CHART
 // ============================================
 const CalibrationChart = ({ models, results }) => {
   const chartRef = useRef(null);
@@ -51,16 +64,13 @@ const CalibrationChart = ({ models, results }) => {
 
   useEffect(() => {
     if (!chartRef.current || !results) return;
-
     if (chartInstance.current) chartInstance.current.destroy();
 
     const datasets = [];
-
     models.forEach((modelName, idx) => {
       const modelData = results.models?.[modelName];
       const cal = modelData?.metrics?.calibration_curve;
       if (!cal) return;
-
       const color = MODEL_COLORS[idx % MODEL_COLORS.length];
       datasets.push({
         label: modelName,
@@ -72,8 +82,6 @@ const CalibrationChart = ({ models, results }) => {
         tension: 0.1,
       });
     });
-
-    // Perfect calibration line
     datasets.push({
       label: "Perfect",
       data: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
@@ -91,15 +99,13 @@ const CalibrationChart = ({ models, results }) => {
         maintainAspectRatio: false,
         scales: {
           x: { title: { display: true, text: "Predicted Probability" }, min: 0, max: 1 },
-          y: { title: { display: true, text: "Actual Fraction of Positives" }, min: 0, max: 1 },
+          y: { title: { display: true, text: "Actual Fraction" }, min: 0, max: 1 },
         },
         plugins: {
-          title: { display: true, text: "Calibration Plot", font: { size: 14 } },
-          legend: { position: "bottom" },
+          legend: { position: "bottom", labels: { font: { size: 11 } } },
         },
       },
     });
-
     return () => { if (chartInstance.current) chartInstance.current.destroy(); };
   }, [results, models]);
 
@@ -107,7 +113,7 @@ const CalibrationChart = ({ models, results }) => {
 };
 
 // ============================================
-// PER-PROTEIN BAR CHART COMPONENT
+// PER-PROTEIN BAR CHART
 // ============================================
 const PerProteinChart = ({ models, results, metric = "mean_prediction" }) => {
   const chartRef = useRef(null);
@@ -115,10 +121,8 @@ const PerProteinChart = ({ models, results, metric = "mean_prediction" }) => {
 
   useEffect(() => {
     if (!chartRef.current || !results) return;
-
     if (chartInstance.current) chartInstance.current.destroy();
 
-    // Get all protein names from first successful model
     const firstModel = models.find((m) => results.models?.[m]?.per_protein);
     if (!firstModel) return;
     const proteinNames = Object.keys(results.models[firstModel].per_protein);
@@ -126,7 +130,6 @@ const PerProteinChart = ({ models, results, metric = "mean_prediction" }) => {
     const datasets = models.map((modelName, idx) => {
       const perProtein = results.models?.[modelName]?.per_protein || {};
       const color = MODEL_COLORS[idx % MODEL_COLORS.length];
-
       return {
         label: modelName,
         data: proteinNames.map((p) => perProtein[p]?.[metric] ?? 0),
@@ -143,26 +146,22 @@ const PerProteinChart = ({ models, results, metric = "mean_prediction" }) => {
         responsive: true,
         maintainAspectRatio: false,
         scales: {
+          x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
           y: {
             beginAtZero: true,
             title: {
               display: true,
-              text: metric === "mean_prediction" ? "Mean Mutation Probability" :
+              text: metric === "mean_prediction" ? "Mean Probability" :
                     metric === "auroc" ? "AUROC" : metric,
+              font: { size: 11 },
             },
           },
         },
         plugins: {
-          title: {
-            display: true,
-            text: `Per-Protein Region: ${metric === "mean_prediction" ? "Mean Prediction" : metric.toUpperCase()}`,
-            font: { size: 14 },
-          },
-          legend: { position: "bottom" },
+          legend: { position: "bottom", labels: { font: { size: 11 } } },
         },
       },
     });
-
     return () => { if (chartInstance.current) chartInstance.current.destroy(); };
   }, [results, models, metric]);
 
@@ -170,9 +169,9 @@ const PerProteinChart = ({ models, results, metric = "mean_prediction" }) => {
 };
 
 // ============================================
-// PREDICTION OVERLAY CHART (Side-by-side comparison)
+// PREDICTION OVERLAY CHART
 // ============================================
-const PredictionOverlayChart = ({ models, results }) => {
+const PredictionOverlayChart = ({ models, results, useLogScale }) => {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
@@ -181,12 +180,9 @@ const PredictionOverlayChart = ({ models, results }) => {
     if (chartInstance.current) chartInstance.current.destroy();
 
     const datasets = [];
-
-    // Add each model's prediction curve
     models.forEach((modelName, idx) => {
       const curve = results.models?.[modelName]?.prediction_curve;
       if (!curve) return;
-
       const color = MODEL_COLORS[idx % MODEL_COLORS.length];
       datasets.push({
         label: modelName,
@@ -201,7 +197,6 @@ const PredictionOverlayChart = ({ models, results }) => {
       });
     });
 
-    // Add ground truth mutation positions as vertical markers
     const mutPositions = results.parameters?.mutation_positions || [];
     if (mutPositions.length > 0) {
       datasets.push({
@@ -209,7 +204,7 @@ const PredictionOverlayChart = ({ models, results }) => {
         data: mutPositions.map((pos) => ({ x: pos, y: 1.0 })),
         borderColor: "#DC2626",
         backgroundColor: "#DC262680",
-        pointRadius: 6,
+        pointRadius: 5,
         pointStyle: "triangle",
         showLine: false,
         order: 1,
@@ -223,31 +218,38 @@ const PredictionOverlayChart = ({ models, results }) => {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
+        interaction: { mode: "index", intersect: false },
         scales: {
           x: {
-            title: { display: true, text: "Genome Position" },
+            title: { display: true, text: "Genome Position", font: { size: 11 } },
             min: 0,
             max: results.parameters?.ground_truth_total || 29903,
           },
           y: {
-            title: { display: true, text: "Mutation Probability" },
-            min: 0,
-            max: 1,
+            type: useLogScale ? "logarithmic" : "linear",
+            title: {
+              display: true,
+              text: useLogScale ? "Mutation Probability (log)" : "Mutation Probability",
+              font: { size: 11 },
+            },
+            ...(useLogScale ? { min: 0.0001 } : { min: 0, max: 1 }),
+            ticks: {
+              font: { size: 10 },
+              ...(useLogScale ? {
+                callback: (val) => {
+                  if ([0.0001, 0.001, 0.01, 0.1, 1].includes(val)) return val;
+                  return null;
+                }
+              } : {}),
+            },
           },
         },
         plugins: {
-          title: {
-            display: true,
-            text: "Prediction Comparison Across Genome",
-            font: { size: 14 },
-          },
-          legend: { position: "bottom" },
+          legend: { position: "bottom", labels: { font: { size: 11 } } },
           tooltip: {
+            backgroundColor: "rgba(0,0,0,0.85)",
             callbacks: {
-              label: (ctx) => {
-                const ds = ctx.dataset.label;
-                return `${ds}: pos ${Math.round(ctx.parsed.x)}, prob ${ctx.parsed.y.toFixed(4)}`;
-              },
+              label: (ctx) => `${ctx.dataset.label}: pos ${Math.round(ctx.parsed.x)}, prob ${ctx.parsed.y.toFixed(4)}`,
             },
           },
         },
@@ -255,7 +257,7 @@ const PredictionOverlayChart = ({ models, results }) => {
     });
 
     return () => { if (chartInstance.current) chartInstance.current.destroy(); };
-  }, [results, models]);
+  }, [results, models, useLogScale]);
 
   return <canvas ref={chartRef} />;
 };
@@ -278,14 +280,11 @@ const BenchmarkDashboard = () => {
   const [pastBenchmarks, setPastBenchmarks] = useState([]);
   const [showPast, setShowPast] = useState(false);
   const [perProteinMetric, setPerProteinMetric] = useState("mean_prediction");
-  
-  // FR-3.1: Dataset benchmark
-  const [benchmarkMode, setBenchmarkMode] = useState("single"); // "single" or "dataset"
+  const [benchmarkMode, setBenchmarkMode] = useState("single");
   const [availableDatasets, setAvailableDatasets] = useState({});
   const [selectedDataset, setSelectedDataset] = useState("");
-  
-  // FR-3.3: Reproducibility
   const [seed, setSeed] = useState("42");
+  const [useLogScale, setUseLogScale] = useState(false);
 
   // Delete uploaded model
   const handleDeleteModel = async (modelValue, modelName) => {
@@ -315,13 +314,9 @@ const BenchmarkDashboard = () => {
         if (res.ok) {
           const data = await res.json();
           const models = [];
-
-          // Server models from shared static list
           staticModels.forEach((m) => {
             models.push({ name: m.name, value: m.path, type: "server" });
           });
-
-          // Uploaded models from API
           const uploaded = data.available_models || [];
           const serverNames = staticModels.map((m) => m.path);
           uploaded.forEach((m) => {
@@ -330,7 +325,6 @@ const BenchmarkDashboard = () => {
               models.push({ name: `${name} (Uploaded)`, value: `uploaded:${name}`, type: "uploaded" });
             }
           });
-
           setAvailableModels(models);
         }
       } catch (err) {
@@ -340,7 +334,7 @@ const BenchmarkDashboard = () => {
     fetchModels();
   }, []);
 
-  // FR-3.1: Fetch available datasets
+  // Fetch available datasets
   useEffect(() => {
     const fetchDatasets = async () => {
       try {
@@ -370,9 +364,8 @@ const BenchmarkDashboard = () => {
       }
     };
     fetchPast();
-  }, [results]); // Refresh after new benchmark
+  }, [results]);
 
-  // Toggle model selection
   const toggleModel = (modelValue) => {
     setSelectedModels((prev) =>
       prev.includes(modelValue)
@@ -387,22 +380,18 @@ const BenchmarkDashboard = () => {
       setError("Select at least 1 model to benchmark.");
       return;
     }
-
     setLoading(true);
     setError("");
     setResults(null);
 
     try {
       let res;
-      
       if (benchmarkMode === "dataset") {
-        // FR-3.1: Dataset benchmark (multi-variant)
         if (!selectedDataset) {
           setError("Please select a dataset.");
           setLoading(false);
           return;
         }
-        
         res = await fetch(`${API_URL}/api/benchmark/run-dataset/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -414,13 +403,11 @@ const BenchmarkDashboard = () => {
           }),
         });
       } else {
-        // Single-variant benchmark
         if (!nodeId) {
           setError("Please enter a Node ID.");
           setLoading(false);
           return;
         }
-        
         res = await fetch(`${API_URL}/api/benchmark/run/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -448,7 +435,7 @@ const BenchmarkDashboard = () => {
     }
   };
 
-  // FR-3.4: Export handlers - use fetch + blob to avoid CORS/auth issues with window.open
+  // Export
   const handleExport = async (format) => {
     if (!results?.benchmark_id) return;
     try {
@@ -491,25 +478,29 @@ const BenchmarkDashboard = () => {
     }
   };
 
-  // Get successful model names from results (handles both single and dataset types)
+  // Successful models
   const successfulModels = useMemo(() => {
     if (!results) return [];
-    
     if (results.type === "dataset") {
-      // Dataset benchmark: models are in aggregated.models
       return Object.keys(results.aggregated?.models || {});
-    } else {
-      // Single benchmark: models with status=success
-      return Object.entries(results.models || {})
-        .filter(([_, v]) => v.status === "success")
-        .map(([k]) => k);
     }
+    return Object.entries(results.models || {})
+      .filter(([_, v]) => v.status === "success")
+      .map(([k]) => k);
   }, [results]);
 
-  // Protein regions for dropdown
   const proteinRegionOptions = [
     "ORF1ab", "S", "ORF3a", "E", "M", "ORF6", "ORF7a", "ORF7b", "ORF8", "N", "ORF10"
   ];
+
+  // Helper: get summary for best model highlighting
+  const getBestIdx = (metricKey, higher) => {
+    const values = successfulModels.map((m) => results.models[m]?.metrics?.[metricKey]);
+    const valid = values.filter((v) => v !== null && v !== undefined);
+    if (higher === null || valid.length === 0) return -1;
+    const best = higher ? Math.max(...valid) : Math.min(...valid);
+    return values.indexOf(best);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 py-6 px-4">
@@ -522,13 +513,10 @@ const BenchmarkDashboard = () => {
           >
             <MdArrowBack /> Back to Home
           </button>
-          <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
             <MdCompareArrows className="text-blue-600" />
             Model Benchmark & Comparison
           </h1>
-          <p className="text-gray-500 mt-1">
-            Compare multiple models on the same data with standardized metrics.
-          </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -538,17 +526,14 @@ const BenchmarkDashboard = () => {
           <div className="lg:col-span-4 space-y-4">
             {/* Model Selection */}
             <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2 text-sm">
                 <MdScience className="text-blue-500" /> Select Models
               </h3>
-              <p className="text-xs text-gray-400 mb-3">
-                Select 2 or more models to compare (minimum 1).
-              </p>
-              <div className="space-y-2 max-h-60 overflow-y-auto">
+              <div className="space-y-1.5 max-h-52 overflow-y-auto">
                 {availableModels.map((model, idx) => (
                   <label
                     key={idx}
-                    className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
+                    className={`flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-sm ${
                       selectedModels.includes(model.value)
                         ? "bg-blue-50 border border-blue-200"
                         : "hover:bg-gray-50 border border-transparent"
@@ -560,19 +545,19 @@ const BenchmarkDashboard = () => {
                       onChange={() => toggleModel(model.value)}
                       className="rounded text-blue-600"
                     />
-                    <span className="text-sm text-gray-700 flex-1">{model.name}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      model.type === "uploaded" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+                    <span className="text-gray-700 flex-1 truncate">{model.name}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      model.type === "uploaded" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
                     }`}>
                       {model.type}
                     </span>
                     {model.type === "uploaded" && (
                       <button
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteModel(model.value, model.name); }}
-                        className="ml-1 text-red-400 hover:text-red-600 transition-colors"
+                        className="text-red-400 hover:text-red-600 transition-colors"
                         title="Delete model"
                       >
-                        <MdError size={16} />
+                        <MdError size={14} />
                       </button>
                     )}
                   </label>
@@ -588,13 +573,13 @@ const BenchmarkDashboard = () => {
 
             {/* Parameters */}
             <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-bold text-gray-800 mb-3">Parameters</h3>
-              
+              <h3 className="font-bold text-gray-800 mb-3 text-sm">Parameters</h3>
+
               {/* Benchmark Mode Toggle */}
               <div className="flex gap-2 mb-4">
                 <button
                   onClick={() => setBenchmarkMode("single")}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-colors ${
                     benchmarkMode === "single" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                 >
@@ -602,14 +587,14 @@ const BenchmarkDashboard = () => {
                 </button>
                 <button
                   onClick={() => setBenchmarkMode("dataset")}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-colors ${
                     benchmarkMode === "dataset" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                 >
                   Dataset (Multi)
                 </button>
               </div>
-              
+
               <div className="space-y-3">
                 {benchmarkMode === "single" ? (
                   <>
@@ -636,7 +621,7 @@ const BenchmarkDashboard = () => {
                   </>
                 ) : (
                   <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Evaluation Dataset</label>
+                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Dataset</label>
                     <select
                       value={selectedDataset}
                       onChange={(e) => setSelectedDataset(e.target.value)}
@@ -649,41 +634,33 @@ const BenchmarkDashboard = () => {
                         </option>
                       ))}
                     </select>
-                    {selectedDataset && availableDatasets[selectedDataset] && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        {availableDatasets[selectedDataset].description}
-                      </p>
-                    )}
                   </div>
                 )}
-                
-                <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Protein Region</label>
-                  <select
-                    value={selectedRegion}
-                    onChange={(e) => setSelectedRegion(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="">Whole Genome</option>
-                    {proteinRegionOptions.map((pr) => (
-                      <option key={pr} value={pr}>{pr}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                {/* FR-3.3: Reproducibility Seed */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">
-                    Random Seed
-                    <MdInfo className="inline ml-1 text-gray-400" title="Fixed seed for reproducible results" />
-                  </label>
-                  <input
-                    type="number"
-                    value={seed}
-                    onChange={(e) => setSeed(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
-                    min={0}
-                  />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Region</label>
+                    <select
+                      value={selectedRegion}
+                      onChange={(e) => setSelectedRegion(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">Whole Genome</option>
+                      {proteinRegionOptions.map((pr) => (
+                        <option key={pr} value={pr}>{pr}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Seed</label>
+                    <input
+                      type="number"
+                      value={seed}
+                      onChange={(e) => setSeed(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                      min={0}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -691,20 +668,17 @@ const BenchmarkDashboard = () => {
               <button
                 onClick={handleRunBenchmark}
                 disabled={loading || selectedModels.length < 1}
-                className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors"
+                className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors text-sm"
               >
                 {loading ? (
                   <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
-                    Running{benchmarkMode === "dataset" ? " Dataset" : ""} Benchmark...
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                    Running...
                   </>
                 ) : (
                   <>
-                    <MdPlayArrow className="text-xl" />
-                    {benchmarkMode === "dataset" 
-                      ? `Run Dataset Benchmark (${selectedModels.length} model${selectedModels.length !== 1 ? "s" : ""})`
-                      : `Run Benchmark (${selectedModels.length} model${selectedModels.length !== 1 ? "s" : ""})`
-                    }
+                    <MdPlayArrow className="text-lg" />
+                    Run Benchmark ({selectedModels.length} model{selectedModels.length !== 1 ? "s" : ""})
                   </>
                 )}
               </button>
@@ -723,8 +697,8 @@ const BenchmarkDashboard = () => {
                   }}
                   className="w-full mt-2 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors text-sm"
                 >
-                  <MdCompareArrows className="text-xl" />
-                  Visual Compare ({selectedModels.length} models)
+                  <MdCompareArrows className="text-lg" />
+                  Visual Compare
                 </button>
               )}
 
@@ -736,23 +710,23 @@ const BenchmarkDashboard = () => {
             </div>
 
             {/* Past Benchmarks */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
               <button
                 onClick={() => setShowPast(!showPast)}
                 className="w-full flex justify-between items-center"
               >
-                <h3 className="font-bold text-gray-800">Past Benchmarks</h3>
+                <h3 className="font-bold text-gray-800 text-sm">Past Benchmarks</h3>
                 {showPast ? <MdExpandLess /> : <MdExpandMore />}
               </button>
               {showPast && (
-                <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
+                <div className="mt-3 space-y-1.5 max-h-36 overflow-y-auto">
                   {pastBenchmarks.map((b, idx) => (
                     <button
                       key={idx}
                       onClick={() => loadPastBenchmark(b.benchmark_id)}
                       className="w-full text-left p-2 hover:bg-blue-50 rounded-lg text-sm transition-colors"
                     >
-                      <p className="font-medium text-gray-700">{b.model_names?.join(" vs ")}</p>
+                      <p className="font-medium text-gray-700 text-xs">{b.model_names?.join(" vs ")}</p>
                       <p className="text-xs text-gray-400">{b.timestamp}</p>
                     </button>
                   ))}
@@ -767,15 +741,15 @@ const BenchmarkDashboard = () => {
           {/* ============================================ */}
           {/* RIGHT PANEL - Results */}
           {/* ============================================ */}
-          <div className="lg:col-span-8 space-y-6">
+          <div className="lg:col-span-8 space-y-4">
             {/* Empty State */}
             {!results && !loading && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-96 flex items-center justify-center">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-80 flex items-center justify-center">
                 <div className="text-center opacity-60">
-                  <MdBarChart size={64} className="mx-auto text-blue-300 mb-4" />
-                  <h3 className="text-xl font-bold text-gray-700 mb-2">Ready to Compare</h3>
-                  <p className="text-gray-500 max-w-sm">
-                    Select models, set parameters, and run a benchmark to see comparison results.
+                  <MdBarChart size={48} className="mx-auto text-blue-300 mb-3" />
+                  <h3 className="text-lg font-bold text-gray-700 mb-1">Ready to Compare</h3>
+                  <p className="text-gray-500 text-sm max-w-sm">
+                    Select models and run a benchmark to see results.
                   </p>
                 </div>
               </div>
@@ -783,9 +757,9 @@ const BenchmarkDashboard = () => {
 
             {/* Loading */}
             {loading && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-96 flex items-center justify-center">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-80 flex items-center justify-center">
                 <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mx-auto mb-4" />
+                  <div className="animate-spin rounded-full h-10 w-10 border-3 border-blue-500 border-t-transparent mx-auto mb-4" />
                   <p className="text-lg font-semibold text-blue-600">Running Benchmark...</p>
                   <p className="text-sm text-gray-400 mt-1">This may take a few minutes</p>
                 </div>
@@ -795,47 +769,36 @@ const BenchmarkDashboard = () => {
             {/* Results */}
             {results && !loading && (
               <>
-                {/* Benchmark Info */}
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h3 className="font-bold text-gray-800">
-                        {results.type === "dataset" 
-                          ? `Dataset Benchmark: ${results.dataset?.name}`
-                          : `Benchmark: ${results.benchmark_id}`
-                        }
-                      </h3>
-                      <p className="text-xs text-gray-400">
-                        {results.timestamp}
-                        {results.type === "dataset" 
-                          ? ` | ${results.dataset?.num_variants} variants evaluated`
-                          : ` | ${results.parameters?.num_mutations} mutations | ${results.parameters?.ground_truth_positives} GT positives`
-                        }
-                        {results.environment?.seed !== undefined && ` | Seed: ${results.reproducibility?.seed || 42}`}
-                      </p>
+                {/* Benchmark Header - Compact */}
+                <div className="bg-white px-5 py-3 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center flex-wrap gap-2">
+                  <div>
+                    <h3 className="font-bold text-gray-800 text-sm">
+                      {results.type === "dataset"
+                        ? `Dataset: ${results.dataset?.name}`
+                        : `Benchmark: ${results.benchmark_id?.substring(0, 20)}`
+                      }
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      {results.timestamp}
+                      {results.type === "dataset"
+                        ? ` | ${results.dataset?.num_variants} variants`
+                        : ` | ${results.parameters?.num_mutations} mutations`
+                      }
+                    </p>
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <div className="flex gap-1">
+                      {["json", "csv", "html"].map((fmt) => (
+                        <button key={fmt} onClick={() => handleExport(fmt)}
+                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded font-mono transition-colors">
+                          {fmt.toUpperCase()}
+                        </button>
+                      ))}
                     </div>
-                    <div className="flex gap-2 items-center">
-                      {/* FR-3.4: Export Buttons */}
-                      <div className="flex gap-1 mr-3">
-                        <button onClick={() => handleExport('json')}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded font-mono transition-colors" title="Download JSON">
-                          JSON
-                        </button>
-                        <button onClick={() => handleExport('csv')}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded font-mono transition-colors" title="Download CSV">
-                          CSV
-                        </button>
-                        <button onClick={() => handleExport('html')}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded font-mono transition-colors" title="Download HTML Report">
-                          HTML
-                        </button>
-                      </div>
+                    <div className="flex gap-1 ml-2">
                       {successfulModels.map((name, idx) => (
-                        <span
-                          key={name}
-                          className="px-2 py-1 rounded-full text-xs font-bold text-white"
-                          style={{ backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length].border }}
-                        >
+                        <span key={name} className="px-2 py-0.5 rounded-full text-xs font-bold text-white"
+                              style={{ backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length].border }}>
                           {name}
                         </span>
                       ))}
@@ -843,11 +806,8 @@ const BenchmarkDashboard = () => {
                   </div>
                 </div>
 
-                {/* Metrics Comparison Table */}
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <MdBarChart className="text-blue-500" /> Metrics Comparison
-                  </h3>
+                {/* Key Metrics - Compact Cards */}
+                <Section title="Key Metrics" icon={<MdBarChart className="text-blue-500" />} defaultOpen={true}>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
@@ -855,15 +815,12 @@ const BenchmarkDashboard = () => {
                           <th className="text-left py-2 px-3 text-gray-500 uppercase text-xs">Metric</th>
                           {successfulModels.map((name, idx) => (
                             <th key={name} className="text-center py-2 px-3">
-                              <span
-                                className="px-2 py-0.5 rounded text-xs font-bold text-white"
-                                style={{ backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length].border }}
-                              >
+                              <span className="px-2 py-0.5 rounded text-xs font-bold text-white"
+                                    style={{ backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length].border }}>
                                 {name}
                               </span>
                             </th>
                           ))}
-                          <th className="text-center py-2 px-3 text-xs text-gray-400">Best ↑/↓</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -873,70 +830,72 @@ const BenchmarkDashboard = () => {
                           { key: "brier_score", label: "Brier Score", higher: false },
                           { key: "ece", label: "ECE", higher: false },
                           { key: "runtime_seconds", label: "Runtime (s)", higher: false },
-                          { key: "mean_prediction", label: "Mean Prediction", higher: null },
-                          { key: "std_prediction", label: "Std Deviation", higher: null },
                         ].map((metric) => {
                           const values = successfulModels.map(
                             (m) => results.models[m]?.metrics?.[metric.key]
                           );
-                          const validValues = values.filter((v) => v !== null && v !== undefined);
-                          let bestIdx = -1;
-                          if (metric.higher !== null && validValues.length > 0) {
-                            const bestVal = metric.higher
-                              ? Math.max(...validValues)
-                              : Math.min(...validValues);
-                            bestIdx = values.indexOf(bestVal);
-                          }
+                          const bestIdx = getBestIdx(metric.key, metric.higher);
 
                           return (
                             <tr key={metric.key} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-2 px-3 font-medium text-gray-700">{metric.label}</td>
+                              <td className="py-2 px-3 font-medium text-gray-700 text-xs">
+                                {metric.label}
+                                <span className="ml-1 text-gray-400">
+                                  {metric.higher ? "↑" : "↓"}
+                                </span>
+                              </td>
                               {values.map((val, idx) => (
-                                <td
-                                  key={idx}
-                                  className={`text-center py-2 px-3 font-mono ${
-                                    idx === bestIdx ? "font-bold text-green-600" : "text-gray-600"
-                                  }`}
-                                >
+                                <td key={idx} className={`text-center py-2 px-3 font-mono text-xs ${
+                                  idx === bestIdx ? "font-bold text-green-600" : "text-gray-600"
+                                }`}>
                                   {val !== null && val !== undefined ? val.toFixed(4) : "—"}
                                   {idx === bestIdx && " ★"}
                                 </td>
                               ))}
-                              <td className="text-center py-2 px-3 text-xs text-gray-400">
-                                {metric.higher === true ? "↑ Higher" : metric.higher === false ? "↓ Lower" : "—"}
-                              </td>
                             </tr>
                           );
                         })}
                       </tbody>
                     </table>
                   </div>
-                </div>
+                </Section>
 
-                {/* Prediction Comparison Chart - Full Width */}
+                {/* Prediction Chart */}
                 {successfulModels.some((m) => results.models?.[m]?.prediction_curve) && (
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                    <div style={{ height: "350px" }}>
-                      <PredictionOverlayChart models={successfulModels} results={results} />
+                  <Section
+                    title="Prediction Comparison"
+                    icon={<MdCompareArrows className="text-purple-500" />}
+                    defaultOpen={true}
+                  >
+                    <div className="flex justify-end mb-2">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={useLogScale}
+                          onChange={(e) => setUseLogScale(e.target.checked)}
+                          className="rounded text-blue-600"
+                        />
+                        Log Scale
+                      </label>
+                    </div>
+                    <div style={{ height: "320px" }}>
+                      <PredictionOverlayChart models={successfulModels} results={results} useLogScale={useLogScale} />
                     </div>
                     <p className="text-xs text-gray-400 mt-2 text-center">
-                      Each line shows a model's predicted mutation probability across the genome. 
-                      Red triangles mark actual mutation positions.
+                      Lines show predicted mutation probability. Red triangles mark actual mutations.
                     </p>
-                  </div>
+                  </Section>
                 )}
 
-                {/* Charts Row */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Calibration Plot */}
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                    <div style={{ height: "300px" }}>
+                {/* Charts Row - Calibration & Per-Protein */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Section title="Calibration" icon={<MdInfo className="text-green-500" />} defaultOpen={true}>
+                    <div style={{ height: "280px" }}>
                       <CalibrationChart models={successfulModels} results={results} />
                     </div>
-                  </div>
+                  </Section>
 
-                  {/* Per-Protein Chart */}
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                  <Section title="Per-Protein" icon={<MdBarChart className="text-amber-500" />} defaultOpen={true}>
                     <div className="flex justify-end mb-2">
                       <select
                         value={perProteinMetric}
@@ -947,25 +906,21 @@ const BenchmarkDashboard = () => {
                         <option value="auroc">AUROC</option>
                         <option value="auprc">AUPRC</option>
                         <option value="brier_score">Brier Score</option>
-                        <option value="mutation_rate">Mutation Rate</option>
                       </select>
                     </div>
-                    <div style={{ height: "280px" }}>
+                    <div style={{ height: "260px" }}>
                       <PerProteinChart
                         models={successfulModels}
                         results={results}
                         metric={perProteinMetric}
                       />
                     </div>
-                  </div>
+                  </Section>
                 </div>
 
-                {/* Model Agreement Matrix */}
+                {/* Model Agreement - Collapsed by default */}
                 {results.model_agreement && Object.keys(results.model_agreement).length > 0 && (
-                  <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                    <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-                      <MdInfo className="text-blue-500" /> Model Agreement (Correlation)
-                    </h3>
+                  <Section title="Model Agreement" icon={<MdInfo className="text-blue-500" />} defaultOpen={false} badge="Correlation">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
@@ -982,17 +937,14 @@ const BenchmarkDashboard = () => {
                               <td className="py-2 px-3 font-medium text-gray-700 text-xs">{rowModel}</td>
                               {successfulModels.map((colModel) => {
                                 const val = results.model_agreement?.[rowModel]?.[colModel];
-                                const isself = rowModel === colModel;
+                                const isSelf = rowModel === colModel;
                                 return (
-                                  <td
-                                    key={colModel}
-                                    className={`text-center py-2 px-3 font-mono text-xs ${
-                                      isself ? "bg-gray-100 text-gray-400" :
-                                      val > 0.8 ? "bg-green-50 text-green-700" :
-                                      val > 0.5 ? "bg-yellow-50 text-yellow-700" :
-                                      "bg-red-50 text-red-700"
-                                    }`}
-                                  >
+                                  <td key={colModel} className={`text-center py-2 px-3 font-mono text-xs ${
+                                    isSelf ? "bg-gray-100 text-gray-400" :
+                                    val > 0.8 ? "bg-green-50 text-green-700" :
+                                    val > 0.5 ? "bg-yellow-50 text-yellow-700" :
+                                    "bg-red-50 text-red-700"
+                                  }`}>
                                     {val !== null ? val.toFixed(3) : "—"}
                                   </td>
                                 );
@@ -1002,35 +954,27 @@ const BenchmarkDashboard = () => {
                         </tbody>
                       </table>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">
-                      Higher correlation = models agree more on which positions are likely to mutate.
-                    </p>
-                  </div>
+                  </Section>
                 )}
 
-                {/* Per-Protein Detail Table */}
+                {/* Per-Protein Detail - Collapsed by default */}
                 {successfulModels.length > 0 && results.models[successfulModels[0]]?.per_protein && (
-                  <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                    <h3 className="font-bold text-gray-800 mb-3">Per-Protein Region Details</h3>
+                  <Section title="Per-Protein Details" icon={<MdScience className="text-gray-500" />} defaultOpen={false} badge="Advanced">
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-b">
                             <th className="text-left py-2 px-2">Region</th>
-                            <th className="text-center py-2 px-2">Positions</th>
-                            <th className="text-center py-2 px-2">Mutations</th>
+                            <th className="text-center py-2 px-2">Pos</th>
+                            <th className="text-center py-2 px-2">Mut</th>
                             {successfulModels.map((m, idx) => (
                               <th key={m} className="text-center py-2 px-2" colSpan="3">
-                                <span
-                                  className="px-1 py-0.5 rounded text-white"
-                                  style={{ backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length].border }}
-                                >
+                                <span className="px-1 py-0.5 rounded text-white"
+                                      style={{ backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length].border }}>
                                   {m}
                                 </span>
                                 <div className="flex justify-center gap-1 mt-1 text-gray-400 font-normal">
-                                  <span>Mean</span>
-                                  <span>AUROC</span>
-                                  <span>Brier</span>
+                                  <span>Mean</span><span>AUROC</span><span>Brier</span>
                                 </div>
                               </th>
                             ))}
@@ -1050,15 +994,9 @@ const BenchmarkDashboard = () => {
                                 const pp = results.models[m]?.per_protein?.[protein];
                                 return (
                                   <React.Fragment key={m}>
-                                    <td className="text-center py-1.5 px-1 font-mono">
-                                      {pp?.mean_prediction?.toFixed(4) ?? "—"}
-                                    </td>
-                                    <td className="text-center py-1.5 px-1 font-mono">
-                                      {pp?.auroc?.toFixed(3) ?? "—"}
-                                    </td>
-                                    <td className="text-center py-1.5 px-1 font-mono">
-                                      {pp?.brier_score?.toFixed(4) ?? "—"}
-                                    </td>
+                                    <td className="text-center py-1.5 px-1 font-mono">{pp?.mean_prediction?.toFixed(4) ?? "—"}</td>
+                                    <td className="text-center py-1.5 px-1 font-mono">{pp?.auroc?.toFixed(3) ?? "—"}</td>
+                                    <td className="text-center py-1.5 px-1 font-mono">{pp?.brier_score?.toFixed(4) ?? "—"}</td>
                                   </React.Fragment>
                                 );
                               })}
@@ -1067,7 +1005,7 @@ const BenchmarkDashboard = () => {
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  </Section>
                 )}
               </>
             )}
