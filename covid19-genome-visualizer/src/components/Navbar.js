@@ -1,15 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { nodeIds as nodes } from "../data/nodeIds";
 import { modelList as staticModels } from "../data/modelList";
 import { useDispatch, useSelector } from "react-redux";
 import { Button, Input } from "@material-tailwind/react";
 import {
   MdOutlineCreate,
-  MdScience,
-  MdTimeline,
-  MdBiotech,
-  MdWarning,
-  MdCheckCircle,
   MdCloudUpload,
   MdClose,
   MdAdd,
@@ -28,10 +23,6 @@ import {
   fetchAvailableModels,
 } from "../features/genome/genomeSlice";
 import logo from "../CovMutexLogo-removebg-preview.png";
-
-// Charts
-import BarChart from "./BarChart";
-import BarChart2 from "./BarChart2";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
@@ -57,33 +48,6 @@ const customStyles = {
 // ============================================
 // SUB-COMPONENTS
 // ============================================
-
-const SummaryCard = ({ title, value, subtext, icon: Icon, color }) => (
-  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 transition-transform hover:scale-105">
-    <div className={`p-3 rounded-full ${color} text-white`}>
-      <Icon size={24} />
-    </div>
-    <div>
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-        {title}
-      </p>
-      <h4 className="text-xl font-bold text-gray-800">{value}</h4>
-      {subtext && <p className="text-xs text-gray-400">{subtext}</p>}
-    </div>
-  </div>
-);
-
-const EmptyState = () => (
-  <div className="h-full flex flex-col items-center justify-center text-center p-10 opacity-60">
-    <div className="bg-blue-50 p-6 rounded-full mb-4">
-      <MdBiotech size={64} className="text-blue-300" />
-    </div>
-    <h3 className="text-xl font-bold text-gray-700 mb-2">Ready to Analyze</h3>
-    <p className="text-gray-500 max-w-sm">
-      Select a prediction model, enter parameters, and run prediction to see results.
-    </p>
-  </div>
-);
 
 // ============================================
 // UPLOAD MODAL
@@ -398,10 +362,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
   // Redux state
   const {
-    dataset: reduxDataset,
-    genome: reduxGenome,
     selectedProteinRegion,
-    availableModels,
     loading: reduxLoading,
   } = useSelector((state) => state.genome);
 
@@ -413,8 +374,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [modelParameters, setModelParameters] = useState([]);
   const [parametersLoading, setParametersLoading] = useState(false);
-  const [localGenomeData, setLocalGenomeData] = useState(null);
-
   const loading = isLoading || reduxLoading;
 
   // ============================================
@@ -597,8 +556,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
     };
 
     try {
-      const result = await dispatch(fetchPrediction(params)).unwrap();
-      setLocalGenomeData(result);
+      await dispatch(fetchPrediction(params)).unwrap();
 
       if (onSubmit) {
         await onSubmit(_nodeId, _elapsedDay, selectedModel, selectedProteinRegion);
@@ -610,70 +568,26 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   };
 
   // ============================================
-  // COMPUTED VALUES
-  // ============================================
-
-  const genomeData = reduxDataset?.length > 0 ? reduxDataset : localGenomeData?.dataset;
-  const genomeSequence = reduxGenome || localGenomeData?.genome;
-
-  const stats = useMemo(() => {
-    if (!genomeData || genomeData.length === 0) return null;
-
-    let totalConfidence = 0;
-    let maxRisk = 0;
-
-    genomeData.forEach((item) => {
-      if (item.mutationPoss) {
-        const values = Object.values(item.mutationPoss);
-        const max = Math.max(...values);
-        totalConfidence += max;
-        const risk = 1 - max;
-        if (risk > maxRisk) maxRisk = risk;
-      }
-    });
-
-    return {
-      length: genomeData.length.toLocaleString(),
-      confidence: (totalConfidence / genomeData.length).toFixed(3),
-      maxRisk: maxRisk.toFixed(3),
-    };
-  }, [genomeData]);
-
-  // ============================================
   // RENDER
   // ============================================
-  if (loading && !genomeData) {
+  if (loading) {
     return <LoadingSpinner />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col p-6 gap-6">
-      {/* Header */}
-      <header className="flex items-center justify-between bg-white px-8 py-4 rounded-2xl shadow-sm border border-gray-100">
-        <div className="flex items-center gap-4">
-          <img src={logo} alt="Logo" className="h-12 w-auto object-contain" />
-          <div className="hidden md:block w-px h-10 bg-gray-200"></div>
-          <h1 className="hidden md:block text-xl font-bold text-blue-900 tracking-tight">
-            CovMutEx - Mutation Explorer
-          </h1>
-        </div>
-      </header>
+    <div className="min-h-screen p-4 flex flex-col justify-center items-center">
+      {/* Centered Logo */}
+      <div className="flex justify-center items-center w-full">
+        <img
+          src={logo}
+          alt="CovMutEx Logo"
+          className="w-[18rem] h-[9rem] sm:w-64 sm:h-[9rem] md:w-80 md:h-[10rem] lg:w-[22rem] lg:h-[14rem] xl:w-[32rem] xl:h-[20rem] object-contain"
+        />
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* ============================================ */}
-        {/* FORM PANEL (Left Side) */}
-        {/* ============================================ */}
-        <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6 z-10">
-          <div className="mb-6 pb-4 border-b border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <MdScience className="text-blue-600" /> Analysis Parameters
-            </h2>
-            <p className="text-xs text-gray-400 mt-1">
-              Configure settings or upload a new model.
-            </p>
-          </div>
-
-          <form className="space-y-5" onSubmit={handleSubmit}>
+      {/* Form */}
+      <div className="w-full max-w-xl">
+          <form className="space-y-4" onSubmit={handleSubmit}>
             {/* Model Selection */}
             <div>
               <div className="flex justify-between items-center mb-1">
@@ -820,16 +734,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               <MdOutlineCreate className="text-lg" />
             </Button>
           </form>
-        </div>
-
-        {/* ============================================ */}
-        {/* RESULTS PANEL - Removed, results shown on /genome-mutation-visualization */}
-        {/* ============================================ */}
-        <div className="lg:col-span-8 space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-[500px] flex items-center justify-center">
-            <EmptyState />
-          </div>
-        </div>
       </div>
 
       {/* Upload Modal */}

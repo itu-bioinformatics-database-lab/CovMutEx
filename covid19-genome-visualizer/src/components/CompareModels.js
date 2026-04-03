@@ -493,25 +493,17 @@ const CompareModels = () => {
                         <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
                       </div>
                     ) : pred?.genomeDataRaw ? (
-                      <div className="flex">
-                        <div className="flex-1" style={{ height: "40vh", maxHeight: "400px", overflow: "hidden" }}>
-                          <GenomeChart
-                            key={`genome-chart-${modelId}`}
-                            genomeData={pred.genomeDataRaw}
-                            genomeSequence={pred.genomeSequence}
-                            onZoomSync={zoomSyncEnabled ? (range) => {
-                              zoomSourceRef.current = modelId;
-                              setSharedZoomRange({ ...range });
-                            } : undefined}
-                            syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
-                          />
-                        </div>
-                        {showDoughnut && pred.proteinMutationProbs && Object.keys(pred.proteinMutationProbs).length > 0 && (
-                          <div className="w-64 flex-shrink-0 flex justify-center items-start pt-4">
-                            <DoughnutChart data={pred.proteinMutationProbs} />
-                          </div>
-                        )}
-                      </div>
+                      <GenomeChart
+                        key={`genome-chart-${modelId}`}
+                        genomeData={pred.genomeDataRaw}
+                        genomeSequence={pred.genomeSequence}
+                        compact={true}
+                        onZoomSync={zoomSyncEnabled ? (range) => {
+                          zoomSourceRef.current = modelId;
+                          setSharedZoomRange({ ...range });
+                        } : undefined}
+                        syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
+                      />
                     ) : error ? (
                       <div className="py-12 text-center text-red-400 text-sm">{error}</div>
                     ) : null}
@@ -550,25 +542,17 @@ const CompareModels = () => {
                         <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
                       </div>
                     ) : pred?.genomeDataRaw ? (
-                      <div>
-                        <div style={{ height: "35vh", minHeight: "280px", overflow: "hidden" }}>
-                          <GenomeChart
-                            key={`genome-chart-side-${modelId}`}
-                            genomeData={pred.genomeDataRaw}
-                            genomeSequence={pred.genomeSequence}
-                            onZoomSync={zoomSyncEnabled ? (range) => {
-                              zoomSourceRef.current = modelId;
-                              setSharedZoomRange({ ...range });
-                            } : undefined}
-                            syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
-                          />
-                        </div>
-                        {showDoughnut && pred.proteinMutationProbs && Object.keys(pred.proteinMutationProbs).length > 0 && (
-                          <div className="flex justify-center py-3 border-t">
-                            <DoughnutChart data={pred.proteinMutationProbs} />
-                          </div>
-                        )}
-                      </div>
+                      <GenomeChart
+                        key={`genome-chart-side-${modelId}`}
+                        genomeData={pred.genomeDataRaw}
+                        genomeSequence={pred.genomeSequence}
+                        compact={true}
+                        onZoomSync={zoomSyncEnabled ? (range) => {
+                          zoomSourceRef.current = modelId;
+                          setSharedZoomRange({ ...range });
+                        } : undefined}
+                        syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
+                      />
                     ) : error ? (
                       <div className="py-12 text-center text-red-400 text-sm">{error}</div>
                     ) : null}

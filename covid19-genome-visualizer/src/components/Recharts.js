@@ -93,7 +93,7 @@ Chart.register(
 );
 
 
-const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange }) => {
+const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, compact = false }) => {
   const chartRef = useRef(null);
   const viewRangeToPreserve = useRef(null);
   const isSyncingZoom = useRef(false);
@@ -670,26 +670,28 @@ decimatedLabels.forEach((label, idx) => {
 
   return (
     <div className="overflow-x-hidden">
-      <div className="chart-container w-full flex bg-[#f6f7f9] py-5">
-        <SidePanel
-          proteinRegions={proteinRegions}
-          onProteinHover={handleProteinHover}
-          onProteinLeave={handleProteinLeave}
-          handleShowFullAnnotation={handleShowFullAnnotation}
-          onProteinClick={handleProteinRegionClick}
-        />
+      <div className={`chart-container w-full flex bg-[#f6f7f9] ${compact ? 'py-1' : 'py-5'}`}>
+        {!compact && (
+          <SidePanel
+            proteinRegions={proteinRegions}
+            onProteinHover={handleProteinHover}
+            onProteinLeave={handleProteinLeave}
+            handleShowFullAnnotation={handleShowFullAnnotation}
+            onProteinClick={handleProteinRegionClick}
+          />
+        )}
         <div className="w-full relative">
           {(focusedProtein || highResViewRange) && (
             <button
               onClick={handleResetView}
-              className="absolute top-8 left-8 z-20 bg-white hover:bg-gray-100 text-gray-800 font-semibold py-1 px-3 border border-gray-400 rounded-lg shadow-md"
+              className={`absolute ${compact ? 'top-2 left-2' : 'top-8 left-8'} z-20 bg-white hover:bg-gray-100 text-gray-800 font-semibold py-1 px-3 border border-gray-400 rounded-lg shadow-md ${compact ? 'text-xs' : ''}`}
               aria-label="Reset View"
             >
               Reset View
             </button>
           )}
 
-          <div className="absolute right-0 top-1/2 transform -translate-y-1/2 z-10">
+          <div className={`absolute right-0 top-1/2 transform -translate-y-1/2 z-10 ${compact ? 'scale-75' : ''}`}>
             <div className="flex flex-col items-center bg-white rounded-lg shadow-md overflow-hidden">
               <button onClick={handleZoomIn} className="w-8 h-8 flex items-center justify-center bg-white hover:bg-gray-100 border-b border-gray-200" aria-label="Zoom in">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-700" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" /></svg>
@@ -699,17 +701,19 @@ decimatedLabels.forEach((label, idx) => {
               </button>
             </div>
           </div>
-          <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 flex items-center space-x-4 z-10">
-            <span className="text-sm text-gray-600">View earlier</span>
-            <button onClick={() => handlePan(-1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-            </button>
-            <button onClick={() => handlePan(1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-            </button>
-            <span className="text-sm text-gray-600">View later</span>
-          </div>
-          <canvas className="w-full h-[90vh] max-h-screen bg-white mt-6 pl-4 pr-8 py-2 rounded-xl shadow-md" ref={chartRef} />
+          {!compact && (
+            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 flex items-center space-x-4 z-10">
+              <span className="text-sm text-gray-600">View earlier</span>
+              <button onClick={() => handlePan(-1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              </button>
+              <button onClick={() => handlePan(1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+              <span className="text-sm text-gray-600">View later</span>
+            </div>
+          )}
+          <canvas className={`w-full bg-white ${compact ? 'h-[45vh] mt-1 px-2 py-1 rounded-lg' : 'h-[90vh] max-h-screen mt-6 pl-4 pr-8 py-2 rounded-xl shadow-md'}`} ref={chartRef} />
         </div>
       </div>
     </div>

@@ -147,21 +147,16 @@ function App() {
               )}
 
               {/* CHARTS */}
-              <div className="block md:flex md:justify-normal p-4">
-                {/* GenomeChart uses genomeDataRaw which is [4][N] format */}
+              <div className="block md:flex md:justify-normal">
                 {genomeDataRaw && genomeDataRaw.length > 0 && (
-                  <div className="flex-1" style={{ height: "85vh", maxHeight: "85vh", overflow: "hidden" }}>
-                    <GenomeChart
-                      genomeData={genomeDataRaw}
-                      genomeSequence={genomeSequence}
-                    />
-                  </div>
+                  <GenomeChart
+                    genomeData={genomeDataRaw}
+                    genomeSequence={genomeSequence}
+                  />
                 )}
 
                 {!selectedProteinRegion && protein_mutation_probs && (
-                  <div className="md:w-1/3 mt-8 md:mt-0 flex justify-center">
-                    <DoughnutChart data={protein_mutation_probs} />
-                  </div>
+                  <DoughnutChart data={protein_mutation_probs} />
                 )}
               </div>
             </div>
