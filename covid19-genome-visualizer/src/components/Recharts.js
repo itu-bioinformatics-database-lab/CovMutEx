@@ -31,6 +31,7 @@ Chart.register(
     id: 'highResLoadingOverlay',
     afterDraw: (chart) => {
       if (chart.highResLoading) {
+        if (!chart.ctx || !chart.chartArea) return;
         const { ctx, chartArea: { top, left, width, height } } = chart;
         ctx.save();
         ctx.fillStyle = 'white';
@@ -46,6 +47,7 @@ Chart.register(
   {
     id: 'weblogoOverlay',
     afterDraw: (chart) => {
+      if (!chart.ctx || !chart.chartArea) return;
       const { ctx, chartArea: { top, left, width, height } } = chart;
       if (chart.weblogoLoading) {
         ctx.save();
@@ -75,6 +77,7 @@ Chart.register(
   {
     id: 'chartVisibilityController',
     beforeDraw: (chart) => {
+      if (!chart.ctx || !chart.chartArea) return;
       if (chart.weblogoImage && chart.weblogoMode) {
         const {ctx, chartArea: {top, left, width, height}} = chart;
         if (!chart.clearedForWeblogo) {
@@ -245,8 +248,10 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, co
     } catch (error) { console.error("WebLogo generation failed:", error); return null; }
   };
   
+  const isChartAlive = (chart) => chart && chart.canvas && chart.ctx && !chart._destroyed;
+
   const displayWebLogo = async (chart, startPos, endPos) => {
-    if (!chart || !chart.canvas || !chart.ctx) return;
+    if (!isChartAlive(chart)) return;
     if (chart.weblogoTransition) return;
     if (focusedProtein) {
       const [proteinStart, proteinEnd] = proteinRegions[focusedProtein].split('-').map(Number);
@@ -259,33 +264,36 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, co
       setWeblogoLoading(true);
       if (chart.weblogoImage) { URL.revokeObjectURL(chart.weblogoImage.url); chart.weblogoImage = null; }
       chart.weblogoLoading = true;
-      chart.update();
+      if (isChartAlive(chart)) chart.update();
       const imageUrl = await fetchWebLogoImage(startPos, endPos, controller.signal);
+      if (!isChartAlive(chart)) return;
       if (!imageUrl) { chart.weblogoMode = false; chart.weblogoLoading = false; return; }
       const img = new Image();
       await new Promise((resolve, reject) => {
         img.onload = () => {
+          if (!isChartAlive(chart)) { resolve(); return; }
           chart.weblogoImage = { url: imageUrl, img, start: startPos, end: endPos, width: img.width, height: img.height };
           chart.weblogoLoading = false; chart.weblogoMode = true; chart.clearedForWeblogo = false; resolve();
         };
         img.onerror = () => reject(new Error('WebLogo image failed to load'));
         img.src = imageUrl;
       });
-      chart.update();
+      if (isChartAlive(chart)) chart.update();
     } catch (error) {
-      if (error.name !== 'AbortError') {
+      if (error.name !== 'AbortError' && isChartAlive(chart)) {
         if (chart.weblogoImage) { URL.revokeObjectURL(chart.weblogoImage.url); chart.weblogoImage = null; }
-        chart.weblogoMode = false; chart.weblogoLoading = false; chart.update();
+        chart.weblogoMode = false; chart.weblogoLoading = false;
+        if (isChartAlive(chart)) chart.update();
       }
     } finally {
       if (controller) controller.abort();
-      chart.weblogoTransition = false;
+      if (chart) chart.weblogoTransition = false;
       setWeblogoLoading(false);
     }
   };
 
   const updateBarChart = (chart) => {
-    if (!chart || !chart.canvas || !chart.ctx) return;
+    if (!isChartAlive(chart)) return;
     if (chart.weblogoImage) {
       URL.revokeObjectURL(chart.weblogoImage.url);
       chart.weblogoImage = null;
@@ -564,7 +572,7 @@ decimatedLabels.forEach((label, idx) => {
         zoom: {
           zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x",
             onZoomComplete: ({ chart }) => {
-                if (!chart || !chart.canvas || !chart.ctx) return;
+                if (!isChartAlive(chart)) return;
                 let startOffset = highResViewRange ? highResViewRange.min : chartViewData.offsetForView;
                 const effectiveDecimate = highResViewRange ? 1 : currentDecimateFactor;
                 const { min: minIndex, max: maxIndex } = chart.scales.x;
@@ -646,7 +654,7 @@ decimatedLabels.forEach((label, idx) => {
     const endTimeFull = performance.now(); // END TOTAL TIMER
     console.log(`[Timer] Total useEffect execution: ${(endTimeFull - startTimeFull).toFixed(2)}ms`);
     
-    return () => { chartInstance.destroy(); };
+    return () => { chartInstance._destroyed = true; chartInstance.destroy(); };
   }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange, normalizedData]);
 
   useEffect(() => {
