@@ -647,29 +647,55 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   }
 
   return (
-    <div className="min-h-screen p-4 flex flex-col justify-center items-center">
+    <div className="min-h-[calc(100vh-3.5rem)] p-4 flex flex-col justify-center items-center bg-gradient-to-br from-gray-50 via-blue-50/30 to-gray-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-colors">
       {/* Centered Logo */}
       <div className="flex justify-center items-center w-full">
         <img
           src={logo}
           alt="CovMutEx Logo"
-          className="w-[18rem] h-[9rem] sm:w-64 sm:h-[9rem] md:w-80 md:h-[10rem] lg:w-[22rem] lg:h-[14rem] xl:w-[32rem] xl:h-[20rem] object-contain"
+          className="w-[18rem] h-[9rem] sm:w-64 sm:h-[9rem] md:w-80 md:h-[10rem] lg:w-[22rem] lg:h-[14rem] xl:w-[32rem] xl:h-[20rem] object-contain drop-shadow-sm"
         />
       </div>
 
-      {/* Form */}
+      {/* Form Card */}
       <div className="w-full max-w-xl">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl dark:shadow-gray-900/50 border border-gray-200 dark:border-gray-800 p-6 animate-fade-in">
+          {/* Step Indicator */}
+          <div className="flex items-center justify-center gap-0 mb-6">
+            {[
+              { num: 1, label: "Select Model" },
+              { num: 2, label: "Configure" },
+              { num: 3, label: "Run" },
+            ].map((step, idx) => (
+              <div key={step.num} className="flex items-center">
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                    (step.num === 1 && selectedModel) || (step.num === 2 && _nodeId) || step.num === 3
+                      ? "bg-blue-600 text-white dark:bg-blue-500"
+                      : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+                  }`}>
+                    {step.num}
+                  </div>
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium">{step.label}</span>
+                </div>
+                {idx < 2 && (
+                  <div className="w-16 h-px bg-gray-200 dark:bg-gray-700 mx-2 mb-4" />
+                )}
+              </div>
+            ))}
+          </div>
+
           <form className="space-y-4" onSubmit={handleSubmit}>
             {/* Model Selection */}
             <div>
               <div className="flex justify-between items-center mb-1">
-                <label className="text-xs font-bold text-gray-500 uppercase block ml-1">
+                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase block ml-1">
                   Prediction Model *
                 </label>
                 <button
                   type="button"
                   onClick={() => setIsUploadModalOpen(true)}
-                  className="text-xs text-blue-600 font-bold hover:text-blue-800 flex items-center gap-1 bg-blue-50 px-2 py-1 rounded transition-colors"
+                  className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded-lg transition-colors"
                 >
                   <MdCloudUpload /> Upload New
                 </button>
@@ -695,7 +721,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
             {/* Variant ID */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Variant ID *
               </label>
               <DropDown items={nodes} setNodeId={setNodeId} />
@@ -703,7 +729,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
             {/* Elapsed Days */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Elapsed Days *
               </label>
               <Input
@@ -713,16 +739,16 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 min={1}
                 placeholder="e.g., 60"
                 required
-                className="!border !border-gray-300 focus:!border-blue-500"
+                className="!border !border-gray-300 dark:!border-gray-600 focus:!border-blue-500 dark:!bg-gray-800 dark:!text-gray-200"
               />
-              <p className="text-xs text-gray-400 mt-1 ml-1">
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 ml-1">
                 Days since variant emergence (affects mutation probability)
               </p>
             </div>
 
             {/* Region */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Protein Region
               </label>
               <Select
@@ -735,7 +761,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 ]}
                 onChange={handleProteinRegionChange}
                 styles={customStyles}
-                placeholder="Optional"
+                placeholder="Optional — defaults to whole genome"
                 isClearable
               />
             </div>
@@ -826,13 +852,14 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               size="lg"
               color="blue"
               type="submit"
-              className="w-full flex justify-center items-center gap-2 shadow-blue-500/20 hover:shadow-blue-500/40 mt-4"
+              className="w-full flex justify-center items-center gap-2 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40 mt-6 rounded-xl"
               disabled={loading}
             >
               {loading ? "Processing..." : "Run Prediction"}
               <MdOutlineCreate className="text-lg" />
             </Button>
           </form>
+        </div>
       </div>
 
       {/* Upload Modal */}
