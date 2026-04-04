@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { nodeIds as nodes } from "../data/nodeIds";
 import { modelList as staticModels } from "../data/modelList";
 import { useDispatch, useSelector } from "react-redux";
@@ -50,17 +50,6 @@ const customStyles = {
     boxShadow: state.isFocused ? "0 0 0 1px #3B82F6" : "none",
     "&:hover": { borderColor: "#3B82F6" },
   }),
-  // Uploaded modelleri farklı renkte göster
-  option: (provided, state) => ({
-    ...provided,
-    backgroundColor: state.isSelected
-      ? "#3B82F6"
-      : state.isFocused
-      ? "#EFF6FF"
-      : "white",
-    color: state.isSelected ? "white" : state.data?.type === "uploaded" ? "#059669" : "#1F2937",
-    fontWeight: state.data?.type === "uploaded" ? "600" : "400",
-  }),
 };
 
 // ============================================
@@ -103,10 +92,10 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
   const [extractorFile, setExtractorFile] = useState(null);
   const [helperFiles, setHelperFiles] = useState([]);
   const [paramsList, setParamsList] = useState([
+    { key: "batch_size", value: "32", required: false },
   ]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
 
   if (!isOpen) return null;
 
@@ -121,7 +110,11 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
 
   const updateParam = (index, field, val) => {
     const list = [...paramsList];
-    list[index][field] = val;
+    if (field === "required") {
+      list[index][field] = val;
+    } else {
+      list[index][field] = val;
+    }
     setParamsList(list);
   };
 
@@ -138,25 +131,14 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
     setHelperFiles([]);
     setParamsList([{ key: "batch_size", value: "32", required: false }]);
     setError("");
-    setSuccessMessage("");
   };
 
   const handleUpload = async (e) => {
     e.preventDefault();
     setError("");
-    setSuccessMessage("");
 
     if (!modelFile || !name.trim()) {
       setError("Please fill required fields (Name, Model File).");
-      return;
-    }
-
-    // Validate required parameters have keys
-    const invalidParams = paramsList.filter(
-      (p) => p.required && !p.key.trim()
-    );
-    if (invalidParams.length > 0) {
-      setError("Required parameters must have a key name.");
       return;
     }
 
@@ -165,7 +147,7 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
     try {
       const formData = new FormData();
 
-      // Use model name as folder name (no timestamp)
+      // Use model name as folder name (clean, no timestamp)
       const folderName = name.trim().replace(/\s+/g, "_");
 
       // Required fields
@@ -185,16 +167,14 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
         formData.append(`helperFileName_${index}`, file.name);
       });
 
-      // Custom parameters - save with {value, required, default} structure
+      // Custom parameters - include required flag
       const customParamsObj = {};
       paramsList.forEach((item) => {
         if (item.key.trim()) {
-          const rawValue = item.value.trim();
-          const numericValue = !isNaN(rawValue) && rawValue !== "" ? parseFloat(rawValue) : rawValue;
           customParamsObj[item.key.trim()] = {
-            value: numericValue,
+            value: isNaN(item.value) ? item.value : parseFloat(item.value),
             required: item.required || false,
-            default: rawValue,
+            default: item.value,
           };
         }
       });
@@ -206,25 +186,21 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
       });
 
       if (response.ok) {
-        setSuccessMessage(`Model "${name}" uploaded successfully!`);
-        
-        // Trigger model list refresh in parent, then close after a short delay
-        if (onSuccess) {
-          await onSuccess(folderName);  // Pass the folder name so parent can auto-select it
-        }
-        
-        // Close after showing success
-        setTimeout(() => {
-          resetForm();
-          onClose();
-        }, 1500);
+        resetForm();
+        onSuccess();  // refresh model list
+        onClose();
       } else {
         const err = await response.json().catch(() => ({}));
-        setError(err.error || "Upload failed. Please try again.");
+        // Model might have been saved even if prediction failed
+        // Refresh the model list anyway
+        onSuccess();
+        setError(err.error || "Upload completed but prediction may have failed. Your model has been saved.");
       }
     } catch (err) {
       console.error("Upload error:", err);
-      setError("Server error during upload.");
+      // Even on network error, try refreshing the list
+      onSuccess();
+      setError("Server error during upload. If the model was saved, it will appear in the list.");
     } finally {
       setUploading(false);
     }
@@ -248,14 +224,6 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
         <p className="text-sm text-gray-500 mb-6">
           Add a new prediction model with custom parameters.
         </p>
-
-        {/* Success message */}
-        {successMessage && (
-          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm flex items-center gap-2">
-            <MdCheckCircle size={20} />
-            {successMessage}
-          </div>
-        )}
 
         {/* Error message */}
         {error && (
@@ -368,7 +336,6 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             <div className="space-y-2">
               {paramsList.map((item, index) => (
                 <div key={index} className="flex gap-2 items-center bg-gray-50 p-2 rounded-lg">
-                  {/* Parameter Key */}
                   <input
                     type="text"
                     placeholder="Key"
@@ -376,7 +343,6 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
                     onChange={(e) => updateParam(index, "key", e.target.value)}
                     className="flex-1 border rounded px-2 py-1 text-sm"
                   />
-                  {/* Default Value */}
                   <input
                     type="text"
                     placeholder="Default Value"
@@ -384,7 +350,6 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
                     onChange={(e) => updateParam(index, "value", e.target.value)}
                     className="flex-1 border rounded px-2 py-1 text-sm"
                   />
-                  {/* Required Checkbox */}
                   <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
                     <input
                       type="checkbox"
@@ -406,9 +371,6 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
                 </div>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-1">
-              Parameters marked as "Required" must be filled before running predictions.
-            </p>
           </div>
 
           {/* Submit Button */}
@@ -418,7 +380,7 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             className="w-full"
             disabled={uploading}
           >
-            {uploading ? "Uploading & Testing..." : "Upload Model"}
+            {uploading ? "Uploading..." : "Upload Model"}
           </Button>
         </form>
       </div>
@@ -452,9 +414,9 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   const loading = isLoading || reduxLoading;
 
   // ============================================
-  // FETCH MODELS FROM API
+  // FETCH MODELS ON MOUNT
   // ============================================
-  const fetchModels = useCallback(async (autoSelectFolder = null) => {
+  const fetchModels = async () => {
     // Format static models
     const formattedStatic = staticModels.map((m) => ({
       label: m.name,
@@ -467,38 +429,21 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
       if (response.ok) {
         const data = await response.json();
-        
-        // Use the new detailed endpoint
-        const uploadedModelsList = data.uploaded_models || [];
-        
-        const formattedAPI = uploadedModelsList.map((m) => ({
-          label: `${m.folder_name} (Uploaded)`,
-          value: `uploaded:${m.folder_name}`,
+        const uploadedModels = data.available_models || [];
+
+        const formattedAPI = uploadedModels.map((m) => ({
+          label: `${m} (Uploaded)`,
+          value: `uploaded:${m}`,
           type: "uploaded",
-          hasParams: m.has_parameters,
-          hasExtractor: m.has_extractor,
-          modelFile: m.model_file,
         }));
 
         const allModels = [...formattedStatic, ...formattedAPI];
         setCombinedModelList(allModels);
 
-        // If a specific folder was just uploaded, auto-select it
-        if (autoSelectFolder) {
-          const uploadedValue = `uploaded:${autoSelectFolder}`;
-          const found = allModels.find((m) => m.value === uploadedValue);
-          if (found) {
-            setSelectedModel(found.value);
-            return;
-          }
-        }
-
-        // Default selection if nothing selected yet
         if (!selectedModel && allModels.length > 0) {
           setSelectedModel(allModels[0].value);
         }
       } else {
-        // Fallback: backward compat with old endpoint
         setCombinedModelList(formattedStatic);
         if (!selectedModel && formattedStatic.length > 0) {
           setSelectedModel(formattedStatic[0].value);
@@ -511,10 +456,18 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
         setSelectedModel(formattedStatic[0].value);
       }
     }
-  }, [selectedModel]);
+  };
 
   useEffect(() => {
     fetchModels();
+    // eslint-disable-next-line
+  }, []);
+
+  // Also refresh models when component becomes visible (e.g., after navigating back from upload page)
+  useEffect(() => {
+    const handleFocus = () => fetchModels();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
     // eslint-disable-next-line
   }, []);
 
@@ -528,7 +481,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
         return;
       }
 
-      // Only fetch parameters for uploaded models
+      // Only fetch for uploaded models
       if (selectedModel.startsWith("uploaded:")) {
         setParametersLoading(true);
         try {
@@ -541,27 +494,25 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
             const data = await response.json();
             const params = data.parameters || {};
             
-            // Convert to array format for UI rendering
-            // Backend now always returns {value, required, default} format
+            // Convert to array format for display
             const paramsArray = Object.entries(params).map(([key, val]) => {
-              if (typeof val === "object" && val !== null) {
+              // Handle both old format (just value) and new format (object with value, required, default)
+              if (typeof val === 'object' && val !== null) {
                 return {
                   key,
                   value: String(val.value ?? val.default ?? ""),
                   required: val.required || false,
-                  default: val.default !== undefined ? String(val.default) : "",
+                  default: val.default,
                 };
               } else {
-                // Fallback for old format
                 return {
                   key,
                   value: String(val),
                   required: false,
-                  default: String(val),
+                  default: val,
                 };
               }
             });
-
             setModelParameters(paramsArray);
           } else {
             setModelParameters([]);
@@ -573,7 +524,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
           setParametersLoading(false);
         }
       } else {
-        // Static/server models don't have custom parameters
+        // Static models don't have custom parameters
         setModelParameters([]);
       }
     };
@@ -599,13 +550,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
     setModelParameters(updated);
   };
 
-  // Reset a single parameter to its default value
-  const resetModelParam = (index) => {
-    const updated = [...modelParameters];
-    updated[index].value = updated[index].default || "";
-    setModelParameters(updated);
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -628,7 +572,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
       return;
     }
 
-    // Build custom parameters object - send actual values
+    // Build custom parameters object
     const customParamsObj = {};
     modelParameters.forEach((item) => {
       if (item.key.trim()) {
@@ -656,11 +600,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
       console.error("Prediction failed:", error);
       alert("Prediction failed: " + (error.message || error));
     }
-  };
-
-  // Upload success handler - refresh list and auto-select the new model
-  const handleUploadSuccess = async (folderName) => {
-    await fetchModels(folderName);
   };
 
   // ============================================
@@ -692,9 +631,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
       maxRisk: maxRisk.toFixed(3),
     };
   }, [genomeData]);
-
-  // Check if currently selected model is an uploaded model
-  const isUploadedModel = selectedModel && selectedModel.startsWith("uploaded:");
 
   // ============================================
   // RENDER
@@ -747,24 +683,21 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               </div>
               <Select
                 options={combinedModelList}
-                onChange={(opt) => setSelectedModel(opt ? opt.value : null)}
-                value={combinedModelList.find((o) => o.value === selectedModel) || null}
+                onChange={(opt) => setSelectedModel(opt.value)}
+                value={combinedModelList.find((o) => o.value === selectedModel)}
                 styles={customStyles}
                 placeholder="Choose a model..."
                 formatOptionLabel={(option) => (
-                  <div className="flex items-center gap-2">
-                    <span>{option.label}</span>
-                    {option.type === "uploaded" && option.hasParams && (
-                      <MdSettings className="text-gray-400" size={14} title="Has custom parameters" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">{option.label}</span>
+                    {option.type === "uploaded" && (
+                      <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded-full ml-2">
+                        Uploaded
+                      </span>
                     )}
                   </div>
                 )}
               />
-              {isUploadedModel && (
-                <p className="text-xs text-green-600 mt-1 ml-1 flex items-center gap-1">
-                  <MdCheckCircle size={12} /> Uploaded model selected
-                </p>
-              )}
             </div>
 
             {/* Variant ID */}
@@ -814,7 +747,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               />
             </div>
 
-            {/* Model Parameters Loading Spinner */}
+            {/* Model Parameters (for uploaded models) */}
             {parametersLoading && (
               <div className="text-center py-4">
                 <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent mx-auto"></div>
@@ -822,7 +755,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               </div>
             )}
 
-            {/* Model Parameters Section (only for uploaded models with parameters) */}
             {!parametersLoading && modelParameters.length > 0 && (
               <div className="mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100">
                 <div className="flex items-center gap-2 mb-3">
@@ -830,81 +762,42 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                   <label className="text-xs font-bold text-blue-800 uppercase">
                     Model Parameters
                   </label>
-                  <MdInfo className="text-blue-400" title="Parameters specific to this uploaded model" />
+                  <MdInfo className="text-blue-400" title="Parameters specific to this model" />
                 </div>
                 <div className="space-y-3">
                   {modelParameters.map((item, index) => (
                     <div
                       key={index}
                       className={`bg-white p-3 rounded-lg border ${
-                        item.required
-                          ? item.value && item.value.trim() !== ""
-                            ? "border-green-200"
-                            : "border-red-300 bg-red-50/30"
-                          : "border-gray-200"
-                      } shadow-sm transition-colors`}
+                        item.required ? "border-orange-200" : "border-gray-200"
+                      } shadow-sm`}
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-gray-700 uppercase flex items-center gap-1">
+                        <span className="text-xs font-bold text-gray-700 uppercase">
                           {item.key}
                           {item.required && (
-                            <span className="text-red-500 text-[10px] font-bold bg-red-50 px-1 rounded">
-                              REQUIRED
-                            </span>
-                          )}
-                          {!item.required && (
-                            <span className="text-gray-400 text-[10px] font-normal bg-gray-50 px-1 rounded">
-                              optional
-                            </span>
+                            <span className="text-red-500 ml-1">*</span>
                           )}
                         </span>
-                        <div className="flex items-center gap-2">
-                          {item.default !== undefined && item.default !== "" && (
-                            <span className="text-xs text-gray-400">
-                              Default: {item.default}
-                            </span>
-                          )}
-                          {/* Reset to default button */}
-                          {item.default && item.value !== item.default && (
-                            <button
-                              type="button"
-                              onClick={() => resetModelParam(index)}
-                              className="text-xs text-blue-500 hover:text-blue-700 underline"
-                              title="Reset to default"
-                            >
-                              Reset
-                            </button>
-                          )}
-                        </div>
+                        {item.default !== undefined && (
+                          <span className="text-xs text-gray-400">
+                            Default: {item.default}
+                          </span>
+                        )}
                       </div>
                       <input
                         type="text"
                         className={`w-full text-sm font-medium text-gray-800 border rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          item.required && (!item.value || item.value.trim() === "")
-                            ? "border-red-300 bg-red-50"
-                            : "border-gray-200"
+                          item.required && !item.value ? "border-red-300 bg-red-50" : "border-gray-200"
                         }`}
                         value={item.value}
                         onChange={(e) => updateModelParam(index, e.target.value)}
-                        placeholder={
-                          item.required
-                            ? `Required (default: ${item.default || "none"})`
-                            : `Optional (default: ${item.default || "none"})`
-                        }
+                        placeholder={item.required ? "Required" : "Optional"}
                         required={item.required}
                       />
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* Uploaded model with no parameters info */}
-            {!parametersLoading && isUploadedModel && modelParameters.length === 0 && (
-              <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 text-center">
-                <p className="text-xs text-gray-500">
-                  This uploaded model has no custom parameters.
-                </p>
               </div>
             )}
 
@@ -923,60 +816,12 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
         </div>
 
         {/* ============================================ */}
-        {/* RESULTS PANEL (Right Side) */}
+        {/* RESULTS PANEL - Removed, results shown on /genome-mutation-visualization */}
         {/* ============================================ */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Empty State */}
-          {!genomeData && (
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-[500px] flex items-center justify-center">
-              <EmptyState />
-            </div>
-          )}
-
-          {/* Results */}
-          {genomeData && genomeData.length > 0 && stats && (
-            <div className="space-y-6">
-              {/* Summary Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <SummaryCard
-                  title="Genome Length"
-                  value={stats.length}
-                  subtext="Base pairs"
-                  icon={MdTimeline}
-                  color="bg-blue-500"
-                />
-                <SummaryCard
-                  title="Avg Confidence"
-                  value={stats.confidence}
-                  subtext="Certainty"
-                  icon={MdCheckCircle}
-                  color="bg-green-500"
-                />
-                <SummaryCard
-                  title="Max Risk"
-                  value={stats.maxRisk}
-                  subtext="Mutation prob"
-                  icon={MdWarning}
-                  color="bg-orange-500"
-                />
-              </div>
-
-              {/* Charts */}
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <h3 className="text-sm font-bold text-gray-700 mb-2">
-                  Mutation Probability Distribution
-                </h3>
-                <BarChart data={genomeData} />
-              </div>
-
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <h3 className="text-sm font-bold text-gray-700 mb-2">
-                  Detailed Sequence View
-                </h3>
-                <BarChart2 data={genomeData} seq={genomeSequence || ""} />
-              </div>
-            </div>
-          )}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-[500px] flex items-center justify-center">
+            <EmptyState />
+          </div>
         </div>
       </div>
 
@@ -984,7 +829,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
       <UploadModal
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
-        onSuccess={handleUploadSuccess}
+        onSuccess={fetchModels}
       />
     </div>
   );

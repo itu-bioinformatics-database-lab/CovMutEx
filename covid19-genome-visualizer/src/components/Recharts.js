@@ -238,6 +238,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
   };
   
   const displayWebLogo = async (chart, startPos, endPos) => {
+    if (!chart || !chart.canvas || !chart.ctx) return;
     if (chart.weblogoTransition) return;
     if (focusedProtein) {
       const [proteinStart, proteinEnd] = proteinRegions[focusedProtein].split('-').map(Number);
@@ -276,6 +277,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
   };
 
   const updateBarChart = (chart) => {
+    if (!chart || !chart.canvas || !chart.ctx) return;
     if (chart.weblogoImage) {
       URL.revokeObjectURL(chart.weblogoImage.url);
       chart.weblogoImage = null;
@@ -554,6 +556,7 @@ decimatedLabels.forEach((label, idx) => {
         zoom: {
           zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x",
             onZoomComplete: ({ chart }) => {
+                if (!chart || !chart.canvas || !chart.ctx) return;
                 let startOffset = highResViewRange ? highResViewRange.min : chartViewData.offsetForView;
                 const effectiveDecimate = highResViewRange ? 1 : currentDecimateFactor;
                 const { min: minIndex, max: maxIndex } = chart.scales.x;
