@@ -18,6 +18,82 @@ import {
 const DEFAULT_NODE_ID = "USA/UT-UPHL-210820924226/2021|OK040008.1|2021-08-07";
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
+/** Predefined parameter presets for dropdown selection */
+const PARAM_PRESETS = [
+  {
+    key: "batch_size",
+    label: "Batch Size",
+    type: "number",
+    defaultValue: "32",
+    placeholder: "e.g., 16, 32, 64",
+    options: ["8", "16", "32", "64", "128", "256"],
+    hint: "Number of samples per training batch",
+  },
+  {
+    key: "learning_rate",
+    label: "Learning Rate",
+    type: "number",
+    defaultValue: "0.001",
+    placeholder: "e.g., 0.001",
+    step: "0.0001",
+    min: "0",
+    hint: "Step size for optimizer",
+  },
+  {
+    key: "epochs",
+    label: "Epochs",
+    type: "number",
+    defaultValue: "100",
+    placeholder: "e.g., 50, 100, 200",
+    options: ["10", "25", "50", "100", "200", "500"],
+    hint: "Number of training iterations",
+  },
+  {
+    key: "optimizer",
+    label: "Optimizer",
+    type: "select",
+    defaultValue: "adam",
+    options: ["adam", "sgd", "rmsprop", "adamw", "adagrad"],
+    hint: "Optimization algorithm",
+  },
+  {
+    key: "dropout_rate",
+    label: "Dropout Rate",
+    type: "number",
+    defaultValue: "0.2",
+    placeholder: "0.0 - 1.0",
+    step: "0.05",
+    min: "0",
+    max: "1",
+    hint: "Fraction of neurons to drop during training",
+  },
+  {
+    key: "sequence_length",
+    label: "Sequence Length",
+    type: "number",
+    defaultValue: "29903",
+    placeholder: "e.g., 29903",
+    hint: "Input genome sequence length",
+  },
+  {
+    key: "hidden_units",
+    label: "Hidden Units",
+    type: "number",
+    defaultValue: "128",
+    placeholder: "e.g., 64, 128, 256",
+    options: ["32", "64", "128", "256", "512"],
+    hint: "Number of neurons in hidden layers",
+  },
+  {
+    key: "activation",
+    label: "Activation Function",
+    type: "select",
+    defaultValue: "relu",
+    options: ["relu", "sigmoid", "tanh", "softmax", "leaky_relu", "gelu"],
+    hint: "Non-linear activation function",
+  },
+];
+
 /**
  * UploadModel Component
  * 
@@ -366,33 +442,108 @@ const UploadModel = () => {
                       onClick={addParam}
                       className="text-sm text-green-600 hover:text-green-800 flex items-center gap-1"
                     >
-                      <MdAdd /> Add
+                      <MdAdd /> Add Parameter
                     </button>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {customParams.map((item, index) => (
-                      <div key={index} className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Key"
-                          value={item.key}
-                          onChange={(e) => updateParam(index, "key", e.target.value)}
-                          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Value"
-                          value={item.value}
-                          onChange={(e) => updateParam(index, "value", e.target.value)}
-                          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        />
+                      <div key={index} className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-end gap-3">
+                        {/* Parameter Name - Dropdown with custom option */}
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Parameter</label>
+                          <select
+                            value={PARAM_PRESETS.some(p => p.key === item.key) ? item.key : "__custom__"}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "__custom__") {
+                                updateParam(index, "key", "");
+                                updateParam(index, "value", "");
+                              } else {
+                                const preset = PARAM_PRESETS.find(p => p.key === val);
+                                updateParam(index, "key", val);
+                                if (preset?.defaultValue && !item.value) {
+                                  updateParam(index, "value", preset.defaultValue);
+                                }
+                              }
+                            }}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                          >
+                            <option value="" disabled>Select parameter...</option>
+                            {PARAM_PRESETS.map(p => (
+                              <option key={p.key} value={p.key}>{p.label}</option>
+                            ))}
+                            <option value="__custom__">✏️ Custom parameter...</option>
+                          </select>
+                          {/* Show text input if custom is selected */}
+                          {!PARAM_PRESETS.some(p => p.key === item.key) && item.key !== "" && (
+                            <input
+                              type="text"
+                              placeholder="Custom parameter name"
+                              value={item.key}
+                              onChange={(e) => updateParam(index, "key", e.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-1.5"
+                            />
+                          )}
+                          {!PARAM_PRESETS.some(p => p.key === item.key) && item.key === "" && (
+                            <input
+                              type="text"
+                              placeholder="Enter parameter name"
+                              value={item.key}
+                              onChange={(e) => updateParam(index, "key", e.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-1.5"
+                            />
+                          )}
+                        </div>
+
+                        {/* Value - Smart input based on param type */}
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Value</label>
+                          {(() => {
+                            const preset = PARAM_PRESETS.find(p => p.key === item.key);
+                            if (preset?.options) {
+                              return (
+                                <select
+                                  value={item.value}
+                                  onChange={(e) => updateParam(index, "value", e.target.value)}
+                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                >
+                                  <option value="" disabled>Select value...</option>
+                                  {preset.options.map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                </select>
+                              );
+                            }
+                            return (
+                              <input
+                                type={preset?.type === "number" ? "number" : "text"}
+                                placeholder={preset?.placeholder || "Value"}
+                                value={item.value}
+                                onChange={(e) => updateParam(index, "value", e.target.value)}
+                                step={preset?.step}
+                                min={preset?.min}
+                                max={preset?.max}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                              />
+                            );
+                          })()}
+                          {/* Hint text */}
+                          {PARAM_PRESETS.find(p => p.key === item.key)?.hint && (
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {PARAM_PRESETS.find(p => p.key === item.key).hint}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Delete Button */}
                         {customParams.length > 1 && (
                           <button
                             type="button"
                             onClick={() => removeParam(index)}
-                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors mb-0.5"
+                            title="Remove parameter"
                           >
-                            <MdDelete />
+                            <MdDelete className="text-lg" />
                           </button>
                         )}
                       </div>
