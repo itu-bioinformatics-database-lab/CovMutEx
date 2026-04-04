@@ -150,9 +150,17 @@ const UploadModel = () => {
   };
 
   const updateParam = (index, field, value) => {
-    const list = [...customParams];
-    list[index][field] = value;
-    setCustomParams(list);
+    setCustomParams(prev => {
+      const list = prev.map((item, i) => i === index ? { ...item, [field]: value } : item);
+      return list;
+    });
+  };
+
+  const updateParamBoth = (index, key, value) => {
+    setCustomParams(prev => {
+      const list = prev.map((item, i) => i === index ? { ...item, key, value } : item);
+      return list;
+    });
   };
 
   const handleHelperFilesChange = (e) => {
@@ -456,23 +464,19 @@ const UploadModel = () => {
                             onChange={(e) => {
                               const val = e.target.value;
                               if (val === "__custom__") {
-                                updateParam(index, "key", "");
-                                updateParam(index, "value", "");
+                                updateParamBoth(index, "", "");
                               } else {
                                 const preset = PARAM_PRESETS.find(p => p.key === val);
-                                updateParam(index, "key", val);
-                                if (preset?.defaultValue && !item.value) {
-                                  updateParam(index, "value", preset.defaultValue);
-                                }
+                                updateParamBoth(index, val, preset?.defaultValue || item.value || "");
                               }
                             }}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500 appearance-auto cursor-pointer"
                           >
-                            <option value="" disabled>Select parameter...</option>
+                            <option value="" disabled>-- Select parameter --</option>
                             {PARAM_PRESETS.map(p => (
                               <option key={p.key} value={p.key}>{p.label}</option>
                             ))}
-                            <option value="__custom__">✏️ Custom parameter...</option>
+                            <option value="__custom__">Custom parameter...</option>
                           </select>
                           {/* Show text input if custom is selected */}
                           {!PARAM_PRESETS.some(p => p.key === item.key) && item.key !== "" && (

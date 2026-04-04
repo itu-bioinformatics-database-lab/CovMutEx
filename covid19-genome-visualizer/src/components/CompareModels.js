@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import GenomeChart from "./Recharts";
 import DoughnutChart from "./DoughnutChart";
@@ -24,6 +24,15 @@ const CompareModels = () => {
   const [predictions, setPredictions] = useState({});
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
+
+  // Layout mode: "stacked" or "sidebyside"
+  const [layoutMode, setLayoutMode] = useState("stacked");
+
+  // Zoom sync state - stores the genome position range to sync across charts
+  const [syncZoomRange, setSyncZoomRange] = useState(null);
+  const [zoomSyncEnabled, setZoomSyncEnabled] = useState(true);
+  // Track which chart triggered the sync to avoid feedback loops
+  const [syncSource, setSyncSource] = useState(null);
 
   useEffect(() => {
     if (!models.length || !nodeId) return;
@@ -78,12 +87,29 @@ const CompareModels = () => {
     // eslint-disable-next-line
   }, []);
 
+  // Create a zoom sync handler for each model - uses useCallback to keep stable references
+  const createZoomSyncHandler = useCallback((modelName) => {
+    return (range) => {
+      if (!zoomSyncEnabled) return;
+      setSyncSource(modelName);
+      setSyncZoomRange({ ...range, _ts: Date.now() });
+    };
+  }, [zoomSyncEnabled]);
+
   const modelNames = models.map((m) => (m.startsWith("uploaded:") ? m.replace("uploaded:", "") : m));
   const anyLoading = modelNames.some((n) => loading[n]);
   const loadedModels = modelNames.filter((n) => predictions[n]?.genomeDataRaw);
   const hasDoughnuts = loadedModels.some(n =>
     predictions[n]?.proteinMutationProbs && Object.keys(predictions[n].proteinMutationProbs).length > 0
   );
+
+  // Grid class based on layout mode and model count
+  const getGridClass = () => {
+    if (layoutMode === "sidebyside") {
+      return loadedModels.length <= 2 ? "grid grid-cols-2 gap-4" : "grid grid-cols-2 gap-4";
+    }
+    return "space-y-4"; // stacked
+  };
 
   return (
     <div className="min-h-screen bg-[#f6f7f9]">
@@ -97,7 +123,47 @@ const CompareModels = () => {
             <h1 className="font-bold text-gray-800 text-lg">Visual Model Comparison</h1>
           </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Layout Toggle */}
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+              <button
+                onClick={() => setLayoutMode("stacked")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  layoutMode === "stacked"
+                    ? "bg-white text-gray-800 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Stacked
+              </button>
+              <button
+                onClick={() => setLayoutMode("sidebyside")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  layoutMode === "sidebyside"
+                    ? "bg-white text-gray-800 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Side by Side
+              </button>
+            </div>
+
+            {/* Zoom Sync Toggle */}
+            <button
+              onClick={() => setZoomSyncEnabled((v) => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                zoomSyncEnabled
+                  ? "bg-blue-50 border-blue-300 text-blue-700"
+                  : "bg-gray-50 border-gray-300 text-gray-500"
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M8 5a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1zM8 15a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                <path fillRule="evenodd" d="M10 2a1 1 0 011 1v2.586l1.707-1.293a1 1 0 011.286 1.414L12 7.414V12.586l1.993 1.707a1 1 0 01-1.286 1.414L11 14.414V17a1 1 0 11-2 0v-2.586l-1.993 1.293a1 1 0 01-1.286-1.414L8 12.586V7.414L6.007 5.707a1 1 0 011.286-1.414L9 5.586V3a1 1 0 011-1z" clipRule="evenodd" />
+              </svg>
+              Zoom Sync {zoomSyncEnabled ? "ON" : "OFF"}
+            </button>
+
             {/* Model Legend */}
             <div className="flex items-center gap-3">
               {modelNames.map((name, idx) => {
@@ -127,8 +193,8 @@ const CompareModels = () => {
           </div>
         )}
 
-        {/* Charts - Stacked vertically, full width, no side panels */}
-        <div className="space-y-4">
+        {/* Charts */}
+        <div className={getGridClass()}>
           {models.map((modelId, idx) => {
             const name = modelNames[idx];
             const mc = MODEL_COLORS[idx % MODEL_COLORS.length];
@@ -159,6 +225,8 @@ const CompareModels = () => {
                       genomeData={pred.genomeDataRaw}
                       genomeSequence={pred.genomeSequence}
                       compact={true}
+                      onZoomSync={zoomSyncEnabled ? createZoomSyncHandler(name) : undefined}
+                      syncZoomRange={zoomSyncEnabled && syncSource !== name ? syncZoomRange : undefined}
                     />
                   ) : error ? (
                     <div className="py-16 text-center text-red-400 text-sm">{error}</div>
@@ -169,24 +237,30 @@ const CompareModels = () => {
           })}
         </div>
 
-        {/* Doughnut Charts - Shared section at the bottom */}
+        {/* Protein Region Distribution - Shared Section */}
         {hasDoughnuts && loadedModels.length > 0 && (
           <div className="mt-6 bg-white rounded-xl shadow-sm border overflow-hidden">
             <div className="px-5 py-3 border-b bg-gray-50">
-              <h2 className="text-sm font-bold text-gray-700">Protein Region Distribution Comparison</h2>
+              <h2 className="text-sm font-bold text-gray-700">Protein Region Mutation Distribution Comparison</h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Each doughnut shows how mutation probability is distributed across protein regions.
+                Use the Normalize switch to compare per-base mutation density instead of raw totals.
+              </p>
             </div>
-            <div className={`grid gap-6 p-6 ${loadedModels.length <= 2 ? "grid-cols-2" : loadedModels.length === 3 ? "grid-cols-3" : "grid-cols-4"}`}>
+            <div className={`grid gap-4 p-4 ${loadedModels.length <= 2 ? "grid-cols-1 md:grid-cols-2" : loadedModels.length === 3 ? "grid-cols-1 md:grid-cols-3" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"}`}>
               {loadedModels.map((name, idx) => {
                 const mc = MODEL_COLORS[idx % MODEL_COLORS.length];
                 const pred = predictions[name];
                 if (!pred?.proteinMutationProbs || Object.keys(pred.proteinMutationProbs).length === 0) return null;
                 return (
-                  <div key={name} className="text-center">
-                    <div className="flex items-center justify-center gap-2 mb-3">
+                  <div key={name}>
+                    <div className="flex items-center justify-center gap-2 mb-2">
                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: mc.border }} />
                       <span className="text-sm font-bold" style={{ color: mc.label }}>{name}</span>
                     </div>
-                    <DoughnutChart data={pred.proteinMutationProbs} />
+                    <div className="flex justify-center">
+                      <DoughnutChart data={pred.proteinMutationProbs} />
+                    </div>
                   </div>
                 );
               })}
