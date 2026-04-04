@@ -46,8 +46,18 @@ const customStyles = {
 };
 
 // ============================================
-// SUB-COMPONENTS
+// PARAMETER PRESETS (shared between UploadModal and main form)
 // ============================================
+const UPLOAD_PARAM_PRESETS = [
+  { key: "batch_size", label: "Batch Size", defaultValue: "32", options: ["8", "16", "32", "64", "128", "256"], hint: "Samples per batch" },
+  { key: "learning_rate", label: "Learning Rate", defaultValue: "0.001", placeholder: "e.g., 0.001", hint: "Optimizer step size" },
+  { key: "epochs", label: "Epochs", defaultValue: "100", options: ["10", "25", "50", "100", "200", "500"], hint: "Training iterations" },
+  { key: "optimizer", label: "Optimizer", defaultValue: "adam", options: ["adam", "sgd", "rmsprop", "adamw", "adagrad"], hint: "Optimization algorithm" },
+  { key: "dropout_rate", label: "Dropout Rate", defaultValue: "0.2", placeholder: "0.0 - 1.0", hint: "Neuron drop fraction" },
+  { key: "sequence_length", label: "Sequence Length", defaultValue: "29903", placeholder: "e.g., 29903", hint: "Genome input length" },
+  { key: "hidden_units", label: "Hidden Units", defaultValue: "128", options: ["32", "64", "128", "256", "512"], hint: "Neurons in hidden layers" },
+  { key: "activation", label: "Activation", defaultValue: "relu", options: ["relu", "sigmoid", "tanh", "softmax", "leaky_relu", "gelu"], hint: "Activation function" },
+];
 
 // ============================================
 // UPLOAD MODAL
@@ -285,57 +295,119 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             )}
           </div>
 
-          {/* Custom Parameters */}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-xs font-bold text-gray-700 uppercase">
-                Model Parameters
-              </label>
+          {/* Custom Parameters - Dropdown Style */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 flex justify-between items-center">
+              <div className="flex items-center gap-2 text-white">
+                <MdSettings className="text-lg" />
+                <span className="text-sm font-bold">Model Parameters</span>
+              </div>
               <button
                 type="button"
                 onClick={addParam}
-                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                className="flex items-center gap-1 text-xs text-white bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg transition-colors border border-white/30"
               >
-                <MdAdd /> Add Parameter
+                <MdAdd /> Add
               </button>
             </div>
-            <div className="space-y-2">
-              {paramsList.map((item, index) => (
-                <div key={index} className="flex gap-2 items-center bg-gray-50 p-2 rounded-lg">
-                  <input
-                    type="text"
-                    placeholder="Key"
-                    value={item.key}
-                    onChange={(e) => updateParam(index, "key", e.target.value)}
-                    className="flex-1 border rounded px-2 py-1 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Default Value"
-                    value={item.value}
-                    onChange={(e) => updateParam(index, "value", e.target.value)}
-                    className="flex-1 border rounded px-2 py-1 text-sm"
-                  />
-                  <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={item.required}
-                      onChange={(e) => updateParam(index, "required", e.target.checked)}
-                      className="rounded"
-                    />
-                    Required
-                  </label>
-                  {paramsList.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeParam(index)}
-                      className="text-red-500 hover:text-red-700 p-1"
-                    >
-                      <MdDelete />
-                    </button>
-                  )}
-                </div>
-              ))}
+            <div className="p-3 space-y-2">
+              {paramsList.map((item, index) => {
+                const isKnownParam = UPLOAD_PARAM_PRESETS.some(p => p.key === item.key);
+                const presetInfo = UPLOAD_PARAM_PRESETS.find(p => p.key === item.key);
+                return (
+                  <div key={index} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                    <div className="p-3 space-y-2">
+                      {/* Parameter Name */}
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Parameter</label>
+                        <select
+                          value={isKnownParam ? item.key : "__custom__"}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "__custom__") {
+                              updateParam(index, "key", "");
+                              updateParam(index, "value", "");
+                            } else {
+                              const p = UPLOAD_PARAM_PRESETS.find(pr => pr.key === val);
+                              updateParam(index, "key", val);
+                              if (p?.defaultValue) updateParam(index, "value", p.defaultValue);
+                            }
+                          }}
+                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all cursor-pointer font-medium"
+                        >
+                          <option value="" disabled>-- Select parameter --</option>
+                          {UPLOAD_PARAM_PRESETS.map(p => (
+                            <option key={p.key} value={p.key}>{p.label}</option>
+                          ))}
+                          <option value="__custom__">Custom...</option>
+                        </select>
+                        {!isKnownParam && (
+                          <input
+                            type="text"
+                            placeholder="Custom parameter name"
+                            value={item.key}
+                            onChange={(e) => updateParam(index, "key", e.target.value)}
+                            className="w-full border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm mt-1.5 focus:border-blue-400"
+                          />
+                        )}
+                      </div>
+                      {/* Value */}
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                          Value {presetInfo?.hint && <span className="normal-case font-normal text-gray-300">({presetInfo.hint})</span>}
+                        </label>
+                        {presetInfo?.options ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {presetInfo.options.map(opt => (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => updateParam(index, "value", opt)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                                  item.value === opt
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
+                                }`}
+                              >
+                                {opt}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder={presetInfo?.placeholder || "Value"}
+                            value={item.value}
+                            onChange={(e) => updateParam(index, "value", e.target.value)}
+                            className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                          />
+                        )}
+                      </div>
+                      {/* Required + Delete row */}
+                      <div className="flex items-center justify-between pt-1">
+                        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={item.required}
+                            onChange={(e) => updateParam(index, "required", e.target.checked)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          Required
+                        </label>
+                        {paramsList.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeParam(index)}
+                            className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"
+                          >
+                            <MdDelete /> Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -677,47 +749,74 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
             )}
 
             {!parametersLoading && modelParameters.length > 0 && (
-              <div className="mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100">
-                <div className="flex items-center gap-2 mb-3">
-                  <MdSettings className="text-blue-500" />
-                  <label className="text-xs font-bold text-blue-800 uppercase">
-                    Model Parameters
-                  </label>
-                  <MdInfo className="text-blue-400" title="Parameters specific to this model" />
+              <div className="mt-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 overflow-hidden">
+                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 flex items-center gap-2">
+                  <MdSettings className="text-white text-lg" />
+                  <span className="text-sm font-bold text-white">Model Parameters</span>
+                  <MdInfo className="text-blue-200" title="Parameters specific to this model" />
                 </div>
-                <div className="space-y-3">
-                  {modelParameters.map((item, index) => (
-                    <div
-                      key={index}
-                      className={`bg-white p-3 rounded-lg border ${
-                        item.required ? "border-orange-200" : "border-gray-200"
-                      } shadow-sm`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-gray-700 uppercase">
-                          {item.key}
-                          {item.required && (
-                            <span className="text-red-500 ml-1">*</span>
-                          )}
-                        </span>
-                        {item.default !== undefined && (
-                          <span className="text-xs text-gray-400">
-                            Default: {item.default}
-                          </span>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        className={`w-full text-sm font-medium text-gray-800 border rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          item.required && !item.value ? "border-red-300 bg-red-50" : "border-gray-200"
+                <div className="p-3 space-y-2">
+                  {modelParameters.map((item, index) => {
+                    const presetInfo = UPLOAD_PARAM_PRESETS.find(p => p.key === item.key);
+                    return (
+                      <div
+                        key={index}
+                        className={`bg-white rounded-xl border shadow-sm overflow-hidden ${
+                          item.required ? "border-orange-200" : "border-gray-200"
                         }`}
-                        value={item.value}
-                        onChange={(e) => updateModelParam(index, e.target.value)}
-                        placeholder={item.required ? "Required" : "Optional"}
-                        required={item.required}
-                      />
-                    </div>
-                  ))}
+                      >
+                        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-gray-700 uppercase">
+                              {presetInfo?.label || item.key}
+                            </span>
+                            {item.required && (
+                              <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold">Required</span>
+                            )}
+                          </div>
+                          {item.default !== undefined && (
+                            <span className="text-xs text-gray-400">
+                              Default: {item.default}
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-3">
+                          {presetInfo?.options ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {presetInfo.options.map(opt => (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  onClick={() => updateModelParam(index, opt)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                                    item.value === opt
+                                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                                      : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
+                                  }`}
+                                >
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <input
+                              type="text"
+                              className={`w-full text-sm font-medium text-gray-800 border-2 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all ${
+                                item.required && !item.value ? "border-red-300 bg-red-50" : "border-gray-200"
+                              }`}
+                              value={item.value}
+                              onChange={(e) => updateModelParam(index, e.target.value)}
+                              placeholder={item.required ? "Required" : "Optional"}
+                              required={item.required}
+                            />
+                          )}
+                          {presetInfo?.hint && (
+                            <p className="text-xs text-blue-500 mt-1.5">{presetInfo.hint}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
