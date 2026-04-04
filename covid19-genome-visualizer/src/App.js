@@ -26,13 +26,12 @@ import CompareModels from "./components/CompareModels";
 // Assets
 import logo from "./CovMutexLogo-removebg-preview.png";
 
-// Page transition wrapper
+// Light page transition - fast fade only, no blocking
 const PageTransition = ({ children }) => (
   <motion.div
-    initial={{ opacity: 0, y: 12 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, y: -12 }}
-    transition={{ duration: 0.25, ease: "easeOut" }}
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    transition={{ duration: 0.15, ease: "easeOut" }}
   >
     {children}
   </motion.div>
@@ -107,7 +106,7 @@ function App() {
       <Nav />
 
       <main className="flex-1">
-        <AnimatePresence mode="wait">
+        <AnimatePresence>
           <Routes location={location} key={location.pathname}>
             {/* ANA SAYFA */}
             <Route
@@ -164,12 +163,11 @@ function App() {
               }
             />
 
-            {/* SONUC GORSELLESTIRME */}
+            {/* SONUC GORSELLESTIRME - no animation wrapper for heavy chart */}
             <Route
               exact
               path="/genome-mutation-visualization"
               element={
-                <PageTransition>
                   <div className="bg-[#f6f7f9] dark:bg-gray-900 relative min-h-screen transition-colors">
                     {/* HEADER / LOGO */}
                     <h1 className="text-center pt-4 pb-0 font-bold text-xl text-gray-800 dark:text-gray-200">
@@ -206,7 +204,6 @@ function App() {
                       )}
                     </div>
                   </div>
-                </PageTransition>
               }
             />
 
