@@ -66,18 +66,14 @@ function App() {
   }, [isSelected, genomeData]);
 
   // --- HANDLERS ---
-  const handleNavbarSubmit = async (
-    nodeId,
-    elapsedDay,
-    selectedModel,
-    selectedProteinRegion
-  ) => {
+  const handleNavbarSubmit = async (inputParams) => {
     const params = {
-      nodeId: nodeId || "default_node_id",
-      elapsedDay: elapsedDay ? Number(elapsedDay) : 0,
-      selectedModel: selectedModel || "balanced_data_model",
-      selectedProteinRegion: selectedProteinRegion || null,
+      nodeId: inputParams?.nodeId || "default_node_id",
+      elapsedDay: inputParams?.elapsedDay ? Number(inputParams.elapsedDay) : 0,
+      selectedModel: inputParams?.selectedModel || "balanced_data_model",
+      selectedProteinRegion: inputParams?.selectedProteinRegion || null,
       isNewUpload: false,
+      customParameters: inputParams?.customParameters || {},
     };
 
     try {

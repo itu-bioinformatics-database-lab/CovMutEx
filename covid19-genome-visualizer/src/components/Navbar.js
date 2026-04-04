@@ -24,8 +24,6 @@ import DropDown from "./DropDown";
 import {
   updateProteinRegion,
   resetProteinRegion,
-  fetchPrediction,
-  fetchAvailableModels,
 } from "../features/genome/genomeSlice";
 import logo from "../CovMutexLogo-removebg-preview.png";
 
@@ -413,8 +411,6 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [modelParameters, setModelParameters] = useState([]);
   const [parametersLoading, setParametersLoading] = useState(false);
-  const [localGenomeData, setLocalGenomeData] = useState(null);
-
   const loading = isLoading || reduxLoading;
 
   // ============================================
@@ -597,11 +593,8 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
     };
 
     try {
-      const result = await dispatch(fetchPrediction(params)).unwrap();
-      setLocalGenomeData(result);
-
       if (onSubmit) {
-        await onSubmit(_nodeId, _elapsedDay, selectedModel, selectedProteinRegion);
+        await onSubmit(params);
       }
     } catch (error) {
       console.error("Prediction failed:", error);
@@ -613,8 +606,8 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   // COMPUTED VALUES
   // ============================================
 
-  const genomeData = reduxDataset?.length > 0 ? reduxDataset : localGenomeData?.dataset;
-  const genomeSequence = reduxGenome || localGenomeData?.genome;
+  const genomeData = reduxDataset;
+  const genomeSequence = reduxGenome;
 
   const stats = useMemo(() => {
     if (!genomeData || genomeData.length === 0) return null;

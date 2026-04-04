@@ -56,6 +56,7 @@ class DefaultCovMutExFeatureExtractor:
     def __init__(self) -> None:
         self._feature_dim = 205
         self.nucleotides_per_position = 4
+        self.use_cache = True
 
     def extract_features(
         self,
@@ -67,12 +68,12 @@ class DefaultCovMutExFeatureExtractor:
         k: int = 30,
         **kwargs,
     ) -> np.ndarray:
-        del mutations, node_ids
-
         from . import feature_extractor_updated as feu
 
         codon_mapper = kwargs.get("codon_mapper")
         config_file = kwargs.get("config_file")
+        cache_path = kwargs.get("cache_path")
+        use_cache = kwargs.get("use_cache", self.use_cache)
 
         if codon_mapper is None:
             feu_dir = os.path.dirname(os.path.abspath(feu.__file__))
@@ -80,6 +81,22 @@ class DefaultCovMutExFeatureExtractor:
 
         if config_file is None:
             config_file = feu.configs()
+
+        if use_cache and cache_path:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            node_id = node_ids[0] if node_ids else None
+            return feu.cache_node_atgc_features(
+                cache_path=cache_path,
+                node_id=node_id,
+                genome_seq=genome_seq,
+                mutations=mutations,
+                codon_mapper=codon_mapper,
+                config_file=config_file,
+                elapsed_day=elapsed_day or 0,
+                depth=kwargs.get("depth", 0),
+                protein_regions=protein_regions,
+                k=k,
+            )
 
         all_raw_data = feu.build_all_raw_feature_rows(
             genome_seq=genome_seq,
@@ -120,6 +137,7 @@ class DefaultCovMutExFeatureExtractor:
             "contract_version": PLUGIN_CONTRACT_VERSION,
             "feature_dimension": self._feature_dim,
             "nucleotides_per_position": self.nucleotides_per_position,
+            "cache_enabled": self.use_cache,
             "preprocessing": "one-hot encoding + standardization",
         }
 
