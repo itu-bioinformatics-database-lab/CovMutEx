@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import GenomeChart from "./Recharts";
 import DoughnutChart from "./DoughnutChart";
+import { proteinRegions } from "../data/proteinRegions";
+import { proteinRegionColorMap } from "../utils/proteinRegionColorMap";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
@@ -237,11 +239,40 @@ const CompareModels = () => {
           })}
         </div>
 
-        {/* Protein Region Distribution - Shared Section */}
-        {hasDoughnuts && loadedModels.length > 0 && (
+        {/* Shared Protein Regions Panel */}
+        {loadedModels.length > 0 && (
           <div className="mt-6 bg-white rounded-xl shadow-sm border overflow-hidden">
             <div className="px-5 py-3 border-b bg-gray-50">
-              <h2 className="text-sm font-bold text-gray-700">Protein Region Mutation Distribution Comparison</h2>
+              <h2 className="text-sm font-bold text-gray-700">Protein Regions Reference</h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Click a region to highlight it on all charts above. Shows genome position ranges for each protein.
+              </p>
+            </div>
+            <div className="p-4">
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(proteinRegions).map(([name, range]) => (
+                  <div
+                    key={name}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors text-sm"
+                  >
+                    <div
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: proteinRegionColorMap[name] || "#ccc" }}
+                    />
+                    <span className="font-semibold text-gray-800">{name}</span>
+                    <span className="text-xs text-gray-400">{range}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Protein Region Mutation Distribution - Shared Section */}
+        {hasDoughnuts && loadedModels.length > 0 && (
+          <div className="mt-4 bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="px-5 py-3 border-b bg-gray-50">
+              <h2 className="text-sm font-bold text-gray-700">Mutation Distribution by Protein Region</h2>
               <p className="text-xs text-gray-400 mt-0.5">
                 Each doughnut shows how mutation probability is distributed across protein regions.
                 Use the Normalize switch to compare per-base mutation density instead of raw totals.

@@ -439,119 +439,147 @@ const UploadModel = () => {
                   )}
                 </div>
 
-                {/* Custom Parameters */}
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <label className="text-sm font-medium text-gray-700">
-                      Custom Parameters
-                    </label>
+                {/* ============================================ */}
+                {/* CUSTOM PARAMETERS - Card-based UI */}
+                {/* ============================================ */}
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5">
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <h3 className="font-bold text-gray-800 text-base flex items-center gap-2">
+                        <MdSettings className="text-green-600 text-xl" />
+                        Model Hyperparameters
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Select parameters from presets or add custom ones</p>
+                    </div>
                     <button
                       type="button"
                       onClick={addParam}
-                      className="text-sm text-green-600 hover:text-green-800 flex items-center gap-1"
+                      className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-sm transition-colors"
                     >
-                      <MdAdd /> Add Parameter
+                      <MdAdd className="text-lg" /> Add Parameter
                     </button>
                   </div>
-                  <div className="space-y-3">
-                    {customParams.map((item, index) => (
-                      <div key={index} className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-end gap-3">
-                        {/* Parameter Name - Dropdown with custom option */}
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Parameter</label>
-                          <select
-                            value={PARAM_PRESETS.some(p => p.key === item.key) ? item.key : "__custom__"}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === "__custom__") {
-                                updateParamBoth(index, "", "");
-                              } else {
-                                const preset = PARAM_PRESETS.find(p => p.key === val);
-                                updateParamBoth(index, val, preset?.defaultValue || item.value || "");
-                              }
-                            }}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500 appearance-auto cursor-pointer"
-                          >
-                            <option value="" disabled>-- Select parameter --</option>
-                            {PARAM_PRESETS.map(p => (
-                              <option key={p.key} value={p.key}>{p.label}</option>
-                            ))}
-                            <option value="__custom__">Custom parameter...</option>
-                          </select>
-                          {/* Show text input if custom is selected */}
-                          {!PARAM_PRESETS.some(p => p.key === item.key) && item.key !== "" && (
-                            <input
-                              type="text"
-                              placeholder="Custom parameter name"
-                              value={item.key}
-                              onChange={(e) => updateParam(index, "key", e.target.value)}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-1.5"
-                            />
-                          )}
-                          {!PARAM_PRESETS.some(p => p.key === item.key) && item.key === "" && (
-                            <input
-                              type="text"
-                              placeholder="Enter parameter name"
-                              value={item.key}
-                              onChange={(e) => updateParam(index, "key", e.target.value)}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-1.5"
-                            />
-                          )}
-                        </div>
 
-                        {/* Value - Smart input based on param type */}
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Value</label>
-                          {(() => {
-                            const preset = PARAM_PRESETS.find(p => p.key === item.key);
-                            if (preset?.options) {
-                              return (
+                  <div className="space-y-3">
+                    {customParams.map((item, index) => {
+                      const isPreset = PARAM_PRESETS.some(p => p.key === item.key);
+                      const preset = PARAM_PRESETS.find(p => p.key === item.key);
+
+                      return (
+                        <div key={index} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                          {/* Parameter Header - colored bar */}
+                          <div className="bg-gray-50 border-b border-gray-200 px-4 py-2.5 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                              Parameter #{index + 1}
+                            </span>
+                            {customParams.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeParam(index)}
+                                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 transition-colors"
+                              >
+                                <MdDelete className="text-sm" /> Remove
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="p-4">
+                            {/* Row 1: Parameter Name Selection */}
+                            <div className="mb-3">
+                              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Parameter Name
+                              </label>
+                              <div className="relative">
+                                <select
+                                  value={isPreset ? item.key : "__custom__"}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "__custom__") {
+                                      updateParamBoth(index, "", "");
+                                    } else {
+                                      const p = PARAM_PRESETS.find(pr => pr.key === val);
+                                      updateParamBoth(index, val, p?.defaultValue || "");
+                                    }
+                                  }}
+                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm bg-white hover:border-green-400 focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all cursor-pointer font-medium appearance-none"
+                                  style={{
+                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+                                    backgroundPosition: 'right 12px center',
+                                    backgroundRepeat: 'no-repeat',
+                                    backgroundSize: '20px',
+                                    paddingRight: '40px'
+                                  }}
+                                >
+                                  <option value="" disabled>-- Choose a parameter --</option>
+                                  <option disabled className="font-bold">--- Common Presets ---</option>
+                                  {PARAM_PRESETS.map(p => (
+                                    <option key={p.key} value={p.key}>
+                                      {p.label} {p.hint ? `(${p.hint})` : ''}
+                                    </option>
+                                  ))}
+                                  <option disabled>---</option>
+                                  <option value="__custom__">Write custom parameter name...</option>
+                                </select>
+                              </div>
+
+                              {/* Custom parameter name input */}
+                              {!isPreset && (
+                                <input
+                                  type="text"
+                                  placeholder="Type your custom parameter name here..."
+                                  value={item.key}
+                                  onChange={(e) => updateParam(index, "key", e.target.value)}
+                                  className="w-full border-2 border-dashed border-gray-300 rounded-xl px-4 py-3 text-sm mt-2 focus:border-green-400 focus:ring-2 focus:ring-green-200 transition-all"
+                                />
+                              )}
+                            </div>
+
+                            {/* Row 2: Value Input */}
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Value
+                              </label>
+                              {preset?.options ? (
                                 <select
                                   value={item.value}
                                   onChange={(e) => updateParam(index, "value", e.target.value)}
-                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm bg-white hover:border-green-400 focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all cursor-pointer font-medium appearance-none"
+                                  style={{
+                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+                                    backgroundPosition: 'right 12px center',
+                                    backgroundRepeat: 'no-repeat',
+                                    backgroundSize: '20px',
+                                    paddingRight: '40px'
+                                  }}
                                 >
-                                  <option value="" disabled>Select value...</option>
+                                  <option value="" disabled>-- Select a value --</option>
                                   {preset.options.map(opt => (
                                     <option key={opt} value={opt}>{opt}</option>
                                   ))}
                                 </select>
-                              );
-                            }
-                            return (
-                              <input
-                                type={preset?.type === "number" ? "number" : "text"}
-                                placeholder={preset?.placeholder || "Value"}
-                                value={item.value}
-                                onChange={(e) => updateParam(index, "value", e.target.value)}
-                                step={preset?.step}
-                                min={preset?.min}
-                                max={preset?.max}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                              />
-                            );
-                          })()}
-                          {/* Hint text */}
-                          {PARAM_PRESETS.find(p => p.key === item.key)?.hint && (
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              {PARAM_PRESETS.find(p => p.key === item.key).hint}
-                            </p>
-                          )}
+                              ) : (
+                                <input
+                                  type={preset?.type === "number" ? "number" : "text"}
+                                  placeholder={preset?.placeholder || "Enter value..."}
+                                  value={item.value}
+                                  onChange={(e) => updateParam(index, "value", e.target.value)}
+                                  step={preset?.step}
+                                  min={preset?.min}
+                                  max={preset?.max}
+                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all"
+                                />
+                              )}
+                              {preset?.hint && (
+                                <p className="text-xs text-green-600 mt-1.5 flex items-center gap-1">
+                                  <span className="inline-block w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+                                  {preset.hint}
+                                </p>
+                              )}
+                            </div>
+                          </div>
                         </div>
-
-                        {/* Delete Button */}
-                        {customParams.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeParam(index)}
-                            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors mb-0.5"
-                            title="Remove parameter"
-                          >
-                            <MdDelete className="text-lg" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
