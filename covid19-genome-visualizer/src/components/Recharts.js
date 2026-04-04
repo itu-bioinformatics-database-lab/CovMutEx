@@ -93,7 +93,7 @@ Chart.register(
 );
 
 
-const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, compact = false }) => {
+const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, compact = false, externalFocusedProtein }) => {
   const chartRef = useRef(null);
   const viewRangeToPreserve = useRef(null);
   const isSyncingZoom = useRef(false);
@@ -104,12 +104,19 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, co
   const selectedProteinRegion = useSelector(
     (state) => state.genome.selectedProteinRegion
   );
-  
+
   const [focusedProtein, setFocusedProtein] = useState(null);
 
   useEffect(() => {
     setFocusedProtein(selectedProteinRegion);
   }, [selectedProteinRegion]);
+
+  // Allow external control of focused protein (e.g. from CompareModels)
+  useEffect(() => {
+    if (externalFocusedProtein !== undefined) {
+      setFocusedProtein(externalFocusedProtein);
+    }
+  }, [externalFocusedProtein]);
 
   const [decimateFactor, setDecimateFactor] = useState(25);
   const [zoomLevel, setZoomLevel] = useState(30000);

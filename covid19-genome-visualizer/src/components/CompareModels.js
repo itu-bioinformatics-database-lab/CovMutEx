@@ -27,14 +27,16 @@ const CompareModels = () => {
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
 
-  // Layout mode: "stacked" or "sidebyside"
+  // Layout mode
   const [layoutMode, setLayoutMode] = useState("stacked");
 
-  // Zoom sync state - stores the genome position range to sync across charts
+  // Zoom sync
   const [syncZoomRange, setSyncZoomRange] = useState(null);
   const [zoomSyncEnabled, setZoomSyncEnabled] = useState(true);
-  // Track which chart triggered the sync to avoid feedback loops
   const [syncSource, setSyncSource] = useState(null);
+
+  // Shared protein region focus - controls all charts simultaneously
+  const [sharedFocusedProtein, setSharedFocusedProtein] = useState(null);
 
   useEffect(() => {
     if (!models.length || !nodeId) return;
@@ -89,7 +91,6 @@ const CompareModels = () => {
     // eslint-disable-next-line
   }, []);
 
-  // Create a zoom sync handler for each model - uses useCallback to keep stable references
   const createZoomSyncHandler = useCallback((modelName) => {
     return (range) => {
       if (!zoomSyncEnabled) return;
@@ -98,6 +99,11 @@ const CompareModels = () => {
     };
   }, [zoomSyncEnabled]);
 
+  // Handle protein region click - toggle focus
+  const handleProteinClick = (proteinName) => {
+    setSharedFocusedProtein((prev) => (prev === proteinName ? null : proteinName));
+  };
+
   const modelNames = models.map((m) => (m.startsWith("uploaded:") ? m.replace("uploaded:", "") : m));
   const anyLoading = modelNames.some((n) => loading[n]);
   const loadedModels = modelNames.filter((n) => predictions[n]?.genomeDataRaw);
@@ -105,12 +111,11 @@ const CompareModels = () => {
     predictions[n]?.proteinMutationProbs && Object.keys(predictions[n].proteinMutationProbs).length > 0
   );
 
-  // Grid class based on layout mode and model count
   const getGridClass = () => {
     if (layoutMode === "sidebyside") {
-      return loadedModels.length <= 2 ? "grid grid-cols-2 gap-4" : "grid grid-cols-2 gap-4";
+      return "grid grid-cols-2 gap-4";
     }
-    return "space-y-4"; // stacked
+    return "space-y-4";
   };
 
   return (
@@ -131,9 +136,7 @@ const CompareModels = () => {
               <button
                 onClick={() => setLayoutMode("stacked")}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                  layoutMode === "stacked"
-                    ? "bg-white text-gray-800 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
+                  layoutMode === "stacked" ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700"
                 }`}
               >
                 Stacked
@@ -141,9 +144,7 @@ const CompareModels = () => {
               <button
                 onClick={() => setLayoutMode("sidebyside")}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                  layoutMode === "sidebyside"
-                    ? "bg-white text-gray-800 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
+                  layoutMode === "sidebyside" ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700"
                 }`}
               >
                 Side by Side
@@ -154,9 +155,7 @@ const CompareModels = () => {
             <button
               onClick={() => setZoomSyncEnabled((v) => !v)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-                zoomSyncEnabled
-                  ? "bg-blue-50 border-blue-300 text-blue-700"
-                  : "bg-gray-50 border-gray-300 text-gray-500"
+                zoomSyncEnabled ? "bg-blue-50 border-blue-300 text-blue-700" : "bg-gray-50 border-gray-300 text-gray-500"
               }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -195,6 +194,55 @@ const CompareModels = () => {
           </div>
         )}
 
+        {/* Protein Regions - Clickable Shared Panel (above charts) */}
+        {loadedModels.length > 0 && (
+          <div className="mb-4 bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-gray-700">Protein Regions</h2>
+                <p className="text-xs text-gray-400">Click a region to zoom all charts to that protein</p>
+              </div>
+              {sharedFocusedProtein && (
+                <button
+                  onClick={() => setSharedFocusedProtein(null)}
+                  className="text-xs bg-red-50 text-red-600 border border-red-200 px-3 py-1 rounded-lg hover:bg-red-100 transition-colors font-medium"
+                >
+                  Reset View
+                </button>
+              )}
+            </div>
+            <div className="p-3">
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(proteinRegions).map(([name, range]) => {
+                  const isActive = sharedFocusedProtein === name;
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => handleProteinClick(name)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all cursor-pointer ${
+                        isActive
+                          ? "border-2 shadow-md scale-105"
+                          : "border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-300"
+                      }`}
+                      style={isActive ? {
+                        backgroundColor: (proteinRegionColorMap[name] || "#ccc") + "30",
+                        borderColor: proteinRegionColorMap[name] || "#ccc",
+                      } : {}}
+                    >
+                      <div
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: proteinRegionColorMap[name] || "#ccc" }}
+                      />
+                      <span className={isActive ? "text-gray-900" : "text-gray-700"}>{name}</span>
+                      <span className="text-xs text-gray-400 hidden sm:inline">{range}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Charts */}
         <div className={getGridClass()}>
           {models.map((modelId, idx) => {
@@ -223,12 +271,13 @@ const CompareModels = () => {
                     </div>
                   ) : pred?.genomeDataRaw ? (
                     <GenomeChart
-                      key={`genome-chart-${modelId}`}
+                      key={`genome-chart-${modelId}-${sharedFocusedProtein || 'full'}`}
                       genomeData={pred.genomeDataRaw}
                       genomeSequence={pred.genomeSequence}
                       compact={true}
                       onZoomSync={zoomSyncEnabled ? createZoomSyncHandler(name) : undefined}
                       syncZoomRange={zoomSyncEnabled && syncSource !== name ? syncZoomRange : undefined}
+                      externalFocusedProtein={sharedFocusedProtein}
                     />
                   ) : error ? (
                     <div className="py-16 text-center text-red-400 text-sm">{error}</div>
@@ -239,43 +288,13 @@ const CompareModels = () => {
           })}
         </div>
 
-        {/* Shared Protein Regions Panel */}
-        {loadedModels.length > 0 && (
-          <div className="mt-6 bg-white rounded-xl shadow-sm border overflow-hidden">
-            <div className="px-5 py-3 border-b bg-gray-50">
-              <h2 className="text-sm font-bold text-gray-700">Protein Regions Reference</h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Click a region to highlight it on all charts above. Shows genome position ranges for each protein.
-              </p>
-            </div>
-            <div className="p-4">
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(proteinRegions).map(([name, range]) => (
-                  <div
-                    key={name}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors text-sm"
-                  >
-                    <div
-                      className="w-3 h-3 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: proteinRegionColorMap[name] || "#ccc" }}
-                    />
-                    <span className="font-semibold text-gray-800">{name}</span>
-                    <span className="text-xs text-gray-400">{range}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Protein Region Mutation Distribution - Shared Section */}
         {hasDoughnuts && loadedModels.length > 0 && (
-          <div className="mt-4 bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div className="mt-6 bg-white rounded-xl shadow-sm border overflow-hidden">
             <div className="px-5 py-3 border-b bg-gray-50">
               <h2 className="text-sm font-bold text-gray-700">Mutation Distribution by Protein Region</h2>
               <p className="text-xs text-gray-400 mt-0.5">
-                Each doughnut shows how mutation probability is distributed across protein regions.
-                Use the Normalize switch to compare per-base mutation density instead of raw totals.
+                Each doughnut shows mutation probability distribution. Use the Normalize switch for per-base density comparison.
               </p>
             </div>
             <div className={`grid gap-4 p-4 ${loadedModels.length <= 2 ? "grid-cols-1 md:grid-cols-2" : loadedModels.length === 3 ? "grid-cols-1 md:grid-cols-3" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"}`}>

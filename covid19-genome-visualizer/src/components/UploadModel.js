@@ -129,6 +129,8 @@ const UploadModel = () => {
 
   // UI state
   const [uploadError, setUploadError] = useState("");
+  // Track which param card has its dropdown open
+  const [openDropdownIndex, setOpenDropdownIndex] = useState(null);
 
   // Fetch available models on mount
   useEffect(() => {
@@ -440,123 +442,175 @@ const UploadModel = () => {
                 </div>
 
                 {/* ============================================ */}
-                {/* CUSTOM PARAMETERS - Card-based UI */}
+                {/* CUSTOM PARAMETERS - Custom Dropdown UI */}
                 {/* ============================================ */}
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5">
-                  <div className="flex justify-between items-center mb-4">
-                    <div>
-                      <h3 className="font-bold text-gray-800 text-base flex items-center gap-2">
-                        <MdSettings className="text-green-600 text-xl" />
+                <div className="bg-white border-2 border-green-200 rounded-2xl overflow-hidden">
+                  {/* Section Header */}
+                  <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-5 py-4 flex justify-between items-center">
+                    <div className="text-white">
+                      <h3 className="font-bold text-base flex items-center gap-2">
+                        <MdSettings className="text-xl" />
                         Model Hyperparameters
                       </h3>
-                      <p className="text-xs text-gray-500 mt-0.5">Select parameters from presets or add custom ones</p>
+                      <p className="text-green-100 text-xs mt-0.5">Configure training parameters for your model</p>
                     </div>
                     <button
                       type="button"
                       onClick={addParam}
-                      className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-sm transition-colors"
+                      className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors border border-white/30"
                     >
-                      <MdAdd className="text-lg" /> Add Parameter
+                      <MdAdd className="text-lg" /> Add
                     </button>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="p-5 space-y-4">
                     {customParams.map((item, index) => {
                       const isPreset = PARAM_PRESETS.some(p => p.key === item.key);
                       const preset = PARAM_PRESETS.find(p => p.key === item.key);
+                      const isDropdownOpen = openDropdownIndex === index;
 
                       return (
-                        <div key={index} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                          {/* Parameter Header - colored bar */}
-                          <div className="bg-gray-50 border-b border-gray-200 px-4 py-2.5 flex items-center justify-between">
-                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                              Parameter #{index + 1}
-                            </span>
+                        <div key={index} className="border border-gray-200 rounded-xl bg-gray-50 overflow-hidden">
+                          {/* Card Header */}
+                          <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-full bg-green-100 text-green-700 text-xs font-bold flex items-center justify-center">
+                                {index + 1}
+                              </span>
+                              <span className="text-sm font-medium text-gray-600">
+                                {isPreset ? preset.label : (item.key || "New Parameter")}
+                              </span>
+                              {isPreset && (
+                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                                  Preset
+                                </span>
+                              )}
+                            </div>
                             {customParams.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => removeParam(index)}
-                                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 transition-colors"
+                                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded transition-colors"
                               >
-                                <MdDelete className="text-sm" /> Remove
+                                <MdDelete /> Remove
                               </button>
                             )}
                           </div>
 
-                          <div className="p-4">
-                            {/* Row 1: Parameter Name Selection */}
-                            <div className="mb-3">
-                              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          <div className="p-4 space-y-3">
+                            {/* Parameter Name - Custom Dropdown */}
+                            <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
                                 Parameter Name
                               </label>
                               <div className="relative">
-                                <select
-                                  value={isPreset ? item.key : "__custom__"}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val === "__custom__") {
-                                      updateParamBoth(index, "", "");
-                                    } else {
-                                      const p = PARAM_PRESETS.find(pr => pr.key === val);
-                                      updateParamBoth(index, val, p?.defaultValue || "");
-                                    }
-                                  }}
-                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm bg-white hover:border-green-400 focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all cursor-pointer font-medium appearance-none"
-                                  style={{
-                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
-                                    backgroundPosition: 'right 12px center',
-                                    backgroundRepeat: 'no-repeat',
-                                    backgroundSize: '20px',
-                                    paddingRight: '40px'
-                                  }}
+                                {/* Dropdown Trigger Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenDropdownIndex(isDropdownOpen ? null : index)}
+                                  className={`w-full text-left border-2 rounded-xl px-4 py-3 text-sm font-medium transition-all flex items-center justify-between ${
+                                    isDropdownOpen
+                                      ? "border-green-500 ring-2 ring-green-200 bg-white"
+                                      : "border-gray-200 bg-white hover:border-green-300"
+                                  }`}
                                 >
-                                  <option value="" disabled>-- Choose a parameter --</option>
-                                  <option disabled className="font-bold">--- Common Presets ---</option>
-                                  {PARAM_PRESETS.map(p => (
-                                    <option key={p.key} value={p.key}>
-                                      {p.label} {p.hint ? `(${p.hint})` : ''}
-                                    </option>
-                                  ))}
-                                  <option disabled>---</option>
-                                  <option value="__custom__">Write custom parameter name...</option>
-                                </select>
+                                  <span className={item.key ? "text-gray-800" : "text-gray-400"}>
+                                    {isPreset ? preset.label : (item.key || "Click to select a parameter...")}
+                                  </span>
+                                  <svg className={`w-5 h-5 text-gray-400 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </button>
+
+                                {/* Dropdown Panel */}
+                                {isDropdownOpen && (
+                                  <div className="absolute z-50 mt-1 w-full bg-white border-2 border-green-200 rounded-xl shadow-xl max-h-72 overflow-y-auto">
+                                    {/* Preset Options */}
+                                    <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Common Presets</span>
+                                    </div>
+                                    {PARAM_PRESETS.map(p => (
+                                      <button
+                                        key={p.key}
+                                        type="button"
+                                        onClick={() => {
+                                          updateParamBoth(index, p.key, p.defaultValue || "");
+                                          setOpenDropdownIndex(null);
+                                        }}
+                                        className={`w-full text-left px-4 py-3 hover:bg-green-50 transition-colors border-b border-gray-50 flex items-center justify-between group ${
+                                          item.key === p.key ? "bg-green-50" : ""
+                                        }`}
+                                      >
+                                        <div>
+                                          <div className="text-sm font-semibold text-gray-800 group-hover:text-green-700">
+                                            {p.label}
+                                          </div>
+                                          <div className="text-xs text-gray-400 mt-0.5">{p.hint}</div>
+                                        </div>
+                                        {item.key === p.key && (
+                                          <span className="text-green-600 text-lg">✓</span>
+                                        )}
+                                        {p.defaultValue && item.key !== p.key && (
+                                          <span className="text-xs text-gray-300 bg-gray-100 px-2 py-0.5 rounded">
+                                            default: {p.defaultValue}
+                                          </span>
+                                        )}
+                                      </button>
+                                    ))}
+
+                                    {/* Custom Option */}
+                                    <div className="px-3 py-2 bg-gray-50 border-t border-gray-100">
+                                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Custom</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateParamBoth(index, "", "");
+                                        setOpenDropdownIndex(null);
+                                      }}
+                                      className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors flex items-center gap-2"
+                                    >
+                                      <MdAdd className="text-blue-500" />
+                                      <span className="text-sm font-medium text-blue-600">Write custom parameter name...</span>
+                                    </button>
+                                  </div>
+                                )}
                               </div>
 
-                              {/* Custom parameter name input */}
-                              {!isPreset && (
+                              {/* Custom parameter name input - only if not a preset */}
+                              {!isPreset && !isDropdownOpen && item.key !== undefined && (
                                 <input
                                   type="text"
-                                  placeholder="Type your custom parameter name here..."
+                                  placeholder="Type your custom parameter name..."
                                   value={item.key}
                                   onChange={(e) => updateParam(index, "key", e.target.value)}
-                                  className="w-full border-2 border-dashed border-gray-300 rounded-xl px-4 py-3 text-sm mt-2 focus:border-green-400 focus:ring-2 focus:ring-green-200 transition-all"
+                                  className="w-full border-2 border-dashed border-gray-300 rounded-xl px-4 py-2.5 text-sm mt-2 focus:border-green-400 focus:ring-2 focus:ring-green-200 transition-all bg-white"
                                 />
                               )}
                             </div>
 
-                            {/* Row 2: Value Input */}
+                            {/* Value Input */}
                             <div>
-                              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
                                 Value
                               </label>
                               {preset?.options ? (
-                                <select
-                                  value={item.value}
-                                  onChange={(e) => updateParam(index, "value", e.target.value)}
-                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm bg-white hover:border-green-400 focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all cursor-pointer font-medium appearance-none"
-                                  style={{
-                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
-                                    backgroundPosition: 'right 12px center',
-                                    backgroundRepeat: 'no-repeat',
-                                    backgroundSize: '20px',
-                                    paddingRight: '40px'
-                                  }}
-                                >
-                                  <option value="" disabled>-- Select a value --</option>
+                                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
                                   {preset.options.map(opt => (
-                                    <option key={opt} value={opt}>{opt}</option>
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      onClick={() => updateParam(index, "value", opt)}
+                                      className={`px-3 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
+                                        item.value === opt
+                                          ? "border-green-500 bg-green-50 text-green-700 shadow-sm"
+                                          : "border-gray-200 bg-white text-gray-600 hover:border-green-300 hover:bg-green-50/50"
+                                      }`}
+                                    >
+                                      {opt}
+                                    </button>
                                   ))}
-                                </select>
+                                </div>
                               ) : (
                                 <input
                                   type={preset?.type === "number" ? "number" : "text"}
@@ -566,14 +620,8 @@ const UploadModel = () => {
                                   step={preset?.step}
                                   min={preset?.min}
                                   max={preset?.max}
-                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all"
+                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all bg-white"
                                 />
-                              )}
-                              {preset?.hint && (
-                                <p className="text-xs text-green-600 mt-1.5 flex items-center gap-1">
-                                  <span className="inline-block w-1.5 h-1.5 bg-green-400 rounded-full"></span>
-                                  {preset.hint}
-                                </p>
                               )}
                             </div>
                           </div>
