@@ -1,6 +1,9 @@
 import json
 import os
 import random
+import re
+import tempfile
+import zipfile
 from Bio import Phylo
 import pandas as pd
 from .configs import configs
@@ -25,7 +28,15 @@ phylo_tree_path = os.path.join(base_dir, "phylogenetic_tree.nwk")
 depth_file = os.path.join(base_dir, 'depth_date.json')
 genome_extractor_dir = os.path.dirname(base_dir)
 ROOT_PATH = os.path.dirname(genome_extractor_dir)
-model_path = os.path.join(genome_extractor_dir, 'covid19_models', "models", "balanced_data_model.keras")
+model_directory = os.path.join(genome_extractor_dir, 'covid19_models', "models")
+default_model_name = "balanced_data_model.keras"
+fixed_default_model_name = "balanced_data_model_fixed.keras"
+model_path = os.path.join(
+    model_directory,
+    fixed_default_model_name
+    if os.path.exists(os.path.join(model_directory, fixed_default_model_name))
+    else default_model_name,
+)
 
 print(f"Base dir: {base_dir}")
 print(f"Genome extractor dir: {genome_extractor_dir}")
@@ -720,51 +731,421 @@ def retrieve_features(cache_path, nodeId):
 # Model loading
 # ---------------------------------------------------------------------------
 
+def _normalize_keras3_config(obj):
+    if isinstance(obj, dict):
+        normalized = {k: _normalize_keras3_config(v) for k, v in obj.items()}
+
+        if normalized.get('class_name') == 'InputLayer':
+            config = normalized.get('config', {})
+            if 'batch_shape' in config and 'input_shape' not in config:
+                batch_shape = config.pop('batch_shape')
+                if batch_shape and len(batch_shape) > 1:
+                    config['input_shape'] = batch_shape[1:]
+            if 'batch_input_shape' in config and 'input_shape' not in config:
+                batch_input_shape = config.pop('batch_input_shape')
+                if batch_input_shape and len(batch_input_shape) > 1:
+                    config['input_shape'] = batch_input_shape[1:]
+            if 'shape' in config and 'input_shape' not in config:
+                config['input_shape'] = config.pop('shape')
+            else:
+                config.pop('shape', None)
+            config.pop('optional', None)
+            config.pop('ragged', None)
+            normalized['config'] = config
+
+        if normalized.get('class_name') == 'DTypePolicy':
+            return normalized.get('config', {}).get('name', 'float32')
+
+        return normalized
+
+    if isinstance(obj, list):
+        return [_normalize_keras3_config(v) for v in obj]
+
+    return obj
+
+
+def _normalize_input_layer_config(config):
+    normalized = dict(config or {})
+
+    if 'batch_shape' in normalized and 'shape' not in normalized:
+        batch_shape = normalized.pop('batch_shape')
+        if batch_shape and len(batch_shape) > 1:
+            normalized['shape'] = tuple(batch_shape[1:])
+        if batch_shape:
+            normalized['batch_size'] = batch_shape[0]
+
+    if 'batch_input_shape' in normalized and 'input_shape' not in normalized:
+        batch_input_shape = normalized.pop('batch_input_shape')
+        if batch_input_shape and len(batch_input_shape) > 1:
+            normalized['input_shape'] = tuple(batch_input_shape[1:])
+        if batch_input_shape:
+            normalized['batch_size'] = batch_input_shape[0]
+
+    if 'input_shape' in normalized and 'shape' not in normalized:
+        normalized['shape'] = tuple(normalized['input_shape'])
+
+    normalized.pop('optional', None)
+    normalized.pop('ragged', None)
+    return normalized
+
+
+def _deserialize_keras_layer(layer_config):
+    layer_spec = {
+        "class_name": layer_config["class_name"],
+        "config": _normalize_keras3_config(layer_config.get("config", {})),
+    }
+    return tf.keras.layers.deserialize(layer_spec)
+
+
+def _resolve_keras_tensor_reference(value, tensor_map):
+    if isinstance(value, dict) and value.get("class_name") == "__keras_tensor__":
+        history = value.get("config", {}).get("keras_history", [])
+        if len(history) < 3:
+            raise ValueError(f"Invalid keras_history reference: {value}")
+        layer_name, _node_index, tensor_index = history[:3]
+        return tensor_map[layer_name][tensor_index]
+
+    if isinstance(value, list):
+        return [_resolve_keras_tensor_reference(item, tensor_map) for item in value]
+
+    return value
+
+
+def _clean_layer_call_kwargs(kwargs):
+    cleaned = {}
+    for key, value in (kwargs or {}).items():
+        if value is None or key == "mask":
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def _get_model_tensor(layer_ref, tensor_map):
+    layer_name, _node_index, tensor_index = layer_ref
+    return tensor_map[layer_name][tensor_index]
+
+
+def _load_weights_from_keras_archive(model, model_path):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with zipfile.ZipFile(model_path) as archive:
+            archive.extract("model.weights.h5", temp_dir)
+        weights_path = os.path.join(temp_dir, "model.weights.h5")
+        try:
+            _load_weights_from_keras_archive_by_signature_queue(
+                model=model,
+                weights_path=weights_path,
+            )
+            return
+        except Exception as exc:
+            print(
+                "Signature-queue archive weight loading failed; falling back to "
+                f"config-ordered loading for {model_path}: {exc}"
+            )
+        try:
+            _load_weights_from_keras_archive_by_config_order(
+                model=model,
+                model_path=model_path,
+                weights_path=weights_path,
+            )
+            return
+        except Exception as exc:
+            print(
+                "Config-ordered archive weight loading failed; falling back to "
+                f"manual layer-name mapping for {model_path}: {exc}"
+            )
+        try:
+            _load_weights_from_keras_archive_by_layer_name(model, weights_path)
+            return
+        except Exception as exc:
+            print(
+                "Layer-name archive weight loading failed; falling back to "
+                f"built-in Keras loading for {model_path}: {exc}"
+            )
+        model.load_weights(weights_path)
+
+
+def _sorted_archive_var_keys(var_group):
+    def sort_key(item):
+        text = str(item)
+        return (0, int(text)) if text.isdigit() else (1, text)
+
+    return sorted(var_group.keys(), key=sort_key)
+
+
+def _natural_archive_key(text):
+    return [
+        int(part) if part.isdigit() else part
+        for part in re.split(r"(\d+)", str(text))
+    ]
+
+
+def _load_weights_from_keras_archive_by_signature_queue(model, weights_path):
+    signature_queues = {}
+
+    with h5py.File(weights_path, "r") as handle:
+        layers_group = handle.get("layers")
+        if layers_group is None:
+            raise ValueError(
+                f"Could not find a 'layers' group in extracted weights file: {weights_path}"
+            )
+
+        for layer_name in sorted(layers_group.keys(), key=_natural_archive_key):
+            archived_vars = layers_group[layer_name].get("vars")
+            if archived_vars is None:
+                continue
+
+            archived_weight_values = [
+                np.array(archived_vars[key]) for key in _sorted_archive_var_keys(archived_vars)
+            ]
+            signature = tuple(tuple(weight.shape) for weight in archived_weight_values)
+            signature_queues.setdefault(signature, []).append(archived_weight_values)
+
+    loaded_layer_names = []
+    missing_signatures = []
+
+    for layer in model.layers:
+        expected_weights = layer.get_weights()
+        if not expected_weights:
+            continue
+
+        signature = tuple(tuple(weight.shape) for weight in expected_weights)
+        available_layers = signature_queues.get(signature, [])
+        if not available_layers:
+            missing_signatures.append((layer.name, signature))
+            continue
+
+        layer.set_weights(available_layers.pop(0))
+        loaded_layer_names.append(layer.name)
+
+    unresolved_layers = [
+        layer.name for layer in model.layers if layer.get_weights() and layer.name not in loaded_layer_names
+    ]
+    if unresolved_layers:
+        raise ValueError(
+            "Could not load all weighted layers from the archive by signature queue. "
+            f"Loaded layers: {loaded_layer_names}. Missing signatures: {missing_signatures}."
+        )
+
+
+def _archive_layer_names_in_config_order(model_path):
+    with zipfile.ZipFile(model_path) as archive:
+        config = json.loads(archive.read("config.json"))
+
+    normalized = _normalize_keras3_config(config)
+    model_config = normalized.get("config", {})
+    layer_configs = model_config.get("layers", [])
+    return [
+        layer_config.get("name") or layer_config.get("config", {}).get("name")
+        for layer_config in layer_configs
+        if (layer_config.get("name") or layer_config.get("config", {}).get("name"))
+    ]
+
+
+def _load_weights_from_keras_archive_by_config_order(model, model_path, weights_path):
+    archived_weight_values = []
+
+    with h5py.File(weights_path, "r") as handle:
+        layers_group = handle.get("layers")
+        if layers_group is None:
+            raise ValueError(
+                f"Could not find a 'layers' group in extracted weights file: {weights_path}"
+            )
+
+        for layer_name in _archive_layer_names_in_config_order(model_path):
+            archived_layer = layers_group.get(layer_name)
+            archived_vars = archived_layer.get("vars") if archived_layer is not None else None
+            if archived_vars is None:
+                continue
+
+            archived_weight_values.extend(
+                np.array(archived_vars[key]) for key in _sorted_archive_var_keys(archived_vars)
+            )
+
+    expected_weights = model.get_weights()
+    expected_shapes = [tuple(weight.shape) for weight in expected_weights]
+    archived_shapes = [tuple(weight.shape) for weight in archived_weight_values]
+    if expected_shapes != archived_shapes:
+        raise ValueError(
+            "Archive config-ordered weights do not match model weights. "
+            f"Expected shapes: {expected_shapes}. Archived shapes: {archived_shapes}."
+        )
+
+    model.set_weights(archived_weight_values)
+
+
+def _load_weights_from_keras_archive_by_layer_name(model, weights_path):
+    loaded_layer_names = []
+    missing_layer_names = []
+    mismatched_layers = []
+
+    with h5py.File(weights_path, "r") as handle:
+        layers_group = handle.get("layers")
+        if layers_group is None:
+            raise ValueError(
+                f"Could not find a 'layers' group in extracted weights file: {weights_path}"
+            )
+
+        for layer in model.layers:
+            expected_weights = layer.get_weights()
+            if not expected_weights:
+                continue
+
+            archived_layer = layers_group.get(layer.name)
+            archived_vars = archived_layer.get("vars") if archived_layer is not None else None
+            if archived_vars is None:
+                missing_layer_names.append(layer.name)
+                continue
+
+            archived_weight_values = [
+                np.array(archived_vars[key]) for key in _sorted_archive_var_keys(archived_vars)
+            ]
+            expected_shapes = [tuple(weight.shape) for weight in expected_weights]
+            archived_shapes = [tuple(weight.shape) for weight in archived_weight_values]
+
+            if expected_shapes != archived_shapes:
+                mismatched_layers.append(
+                    {
+                        "layer_name": layer.name,
+                        "expected_shapes": expected_shapes,
+                        "archived_shapes": archived_shapes,
+                    }
+                )
+                continue
+
+            layer.set_weights(archived_weight_values)
+            loaded_layer_names.append(layer.name)
+
+    required_layer_names = [layer.name for layer in model.layers if layer.get_weights()]
+    unresolved_layer_names = [
+        layer_name
+        for layer_name in required_layer_names
+        if layer_name not in loaded_layer_names
+    ]
+    if unresolved_layer_names:
+        raise ValueError(
+            "Manual archive weight loading could not resolve all weighted layers. "
+            f"Loaded: {loaded_layer_names}. Missing: {missing_layer_names}. "
+            f"Mismatched: {mismatched_layers}. Unresolved: {unresolved_layer_names}."
+        )
+
+
+def _rebuild_functional_model_from_keras_archive(model_path, normalized_config):
+    model_config = normalized_config.get("config", {})
+    tensor_map = {}
+    input_tensors = []
+
+    for layer_config in model_config.get("layers", []):
+        class_name = layer_config.get("class_name")
+        layer_name = layer_config.get("name") or layer_config.get("config", {}).get("name")
+
+        if class_name == "InputLayer":
+            input_config = _normalize_input_layer_config(layer_config.get("config", {}))
+            shape = input_config.get("shape") or input_config.get("input_shape")
+            input_tensor = tf.keras.Input(
+                shape=tuple(shape) if shape is not None else None,
+                batch_size=input_config.get("batch_size"),
+                dtype=input_config.get("dtype", "float32"),
+                sparse=input_config.get("sparse", False),
+                name=input_config.get("name", layer_name),
+            )
+            tensor_map[layer_name] = [input_tensor]
+            input_tensors.append(input_tensor)
+            continue
+
+        layer = _deserialize_keras_layer(layer_config)
+        inbound_nodes = layer_config.get("inbound_nodes", [])
+        if not inbound_nodes:
+            raise ValueError(f"Layer {layer_name} has no inbound_nodes in functional config")
+
+        call_spec = inbound_nodes[0]
+        args = _resolve_keras_tensor_reference(call_spec.get("args", []), tensor_map)
+        kwargs = _clean_layer_call_kwargs(call_spec.get("kwargs", {}))
+        if not isinstance(args, list):
+            args = [args]
+
+        output_tensor = layer(*args, **kwargs)
+        tensor_map[layer_name] = list(output_tensor) if isinstance(output_tensor, (list, tuple)) else [output_tensor]
+
+    output_refs = model_config.get("output_layers", [])
+    outputs = [_get_model_tensor(output_ref, tensor_map) for output_ref in output_refs]
+    model_inputs = input_tensors[0] if len(input_tensors) == 1 else input_tensors
+    model_outputs = outputs[0] if len(outputs) == 1 else outputs
+    model = tf.keras.Model(
+        inputs=model_inputs,
+        outputs=model_outputs,
+        name=model_config.get("name"),
+    )
+    _load_weights_from_keras_archive(model, model_path)
+    return model
+
+
+def _rebuild_model_from_keras_archive(model_path):
+    with zipfile.ZipFile(model_path) as archive:
+        config = json.loads(archive.read('config.json'))
+
+    normalized = _normalize_keras3_config(config)
+    class_name = normalized.get('class_name')
+    model_config = normalized.get('config', {})
+
+    if class_name == 'Functional':
+        return _rebuild_functional_model_from_keras_archive(model_path, normalized)
+
+    if class_name == 'Sequential':
+        model = tf.keras.Sequential.from_config(model_config)
+    else:
+        model = tf.keras.Model.from_config(model_config)
+
+    _load_weights_from_keras_archive(model, model_path)
+    return model
+
+
 def load_legacy_keras_model(model_path):
     print(f"Attempting to load model from: {model_path}")
 
-    try:
-        import tf_keras
-        model = tf_keras.models.load_model(model_path, compile=False)
-        print("Model loaded successfully with tf_keras")
-        return model
-    except ImportError:
+    candidate_paths = [model_path]
+    if model_path.endswith(".keras"):
+        fixed_path = model_path.replace(".keras", "_fixed.keras")
+        h5_path = model_path.replace(".keras", ".h5")
+        if fixed_path not in candidate_paths and os.path.exists(fixed_path):
+            candidate_paths.insert(0, fixed_path)
+        if h5_path not in candidate_paths and os.path.exists(h5_path):
+            candidate_paths.append(h5_path)
+
+    load_attempts = []
+
+    for candidate_path in candidate_paths:
+        if candidate_path.endswith(".keras"):
+            try:
+                print(f"Trying normalized-config rebuild with: {candidate_path}")
+                model = _rebuild_model_from_keras_archive(candidate_path)
+                print(f"Model rebuilt successfully from archive: {candidate_path}")
+                return model
+            except Exception as e:
+                message = f"normalized-config rebuild failed for {candidate_path}: {e}"
+                print(message)
+                load_attempts.append(message)
+            continue
+
         try:
-            import subprocess, sys
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'tf-keras'])
-            import tf_keras
-            model = tf_keras.models.load_model(model_path, compile=False)
-            print("Model loaded successfully with tf_keras")
+            print(f"Trying tf.keras loader with: {candidate_path}")
+            model = tf.keras.models.load_model(candidate_path, compile=False)
+            print(f"Model loaded successfully with tf.keras: {candidate_path}")
             return model
         except Exception as e:
-            print(f"Could not install or use tf_keras: {e}")
-    except Exception as e:
-        print(f"tf_keras loading failed: {e}")
-
-    try:
-        model = tf.keras.models.load_model(model_path, compile=False)
-        print("Model loaded successfully with standard method")
-        return model
-    except Exception as e:
-        print(f"Standard loading failed: {e}")
-
-    h5_path = model_path.replace('.keras', '.h5')
-    if os.path.exists(h5_path):
-        try:
-            model = tf.keras.models.load_model(h5_path, compile=False)
-            print("Model loaded successfully from .h5 format")
-            return model
-        except Exception as e:
-            print(f"Failed to load .h5 format: {e}")
+            message = f"tf.keras failed for {candidate_path}: {e}"
+            print(message)
+            load_attempts.append(message)
 
     raise RuntimeError(
-        f"Could not load model from {model_path}.\n"
-        "Please try: pip install tf-keras\n"
-        f"Current TensorFlow version: {tf.__version__}"
+        "Could not load any compatible model artifact.\n"
+        f"Requested path: {model_path}\n"
+        f"Candidates tried: {candidate_paths}\n"
+        f"Current TensorFlow version: {tf.__version__}\n"
+        + "\n".join(load_attempts)
     )
 
 
-model = load_legacy_keras_model(model_path)
+model = None
 
 
 # ---------------------------------------------------------------------------
@@ -864,10 +1245,41 @@ def predict_mutations(
     X = preprocess_matrix(all_raw_data, expected_size=205)
     print(f"Preprocessed matrix shape: {X.shape}")
 
+    def _prepare_model_inputs_for_prediction(feature_matrix, keras_model):
+        model_inputs = getattr(keras_model, "inputs", None)
+        if not isinstance(model_inputs, (list, tuple)) or len(model_inputs) <= 1:
+            return feature_matrix
+
+        prepared_inputs = []
+        feature_width = feature_matrix.shape[1] if feature_matrix.ndim >= 2 else None
+
+        for input_tensor in model_inputs:
+            input_shape = tuple(getattr(input_tensor, "shape", ()) or ())
+            expected_width = input_shape[-1] if len(input_shape) >= 2 else None
+            if (
+                expected_width is not None
+                and feature_width is not None
+                and expected_width != feature_width
+            ):
+                raise ValueError(
+                    "Multi-input model expects feature width "
+                    f"{expected_width}, but received {feature_width}."
+                )
+            prepared_inputs.append(feature_matrix)
+
+        print(
+            "Prepared multi-input prediction payload:",
+            len(prepared_inputs),
+            "branches ×",
+            feature_matrix.shape,
+        )
+        return prepared_inputs
+
     # --- STEP 3: Batch inference ---
     print("Running batch inference...")
     start_pred = time.time()
-    preds = model.predict(X, batch_size=4096, verbose=1)
+    prediction_inputs = _prepare_model_inputs_for_prediction(X, model)
+    preds = model.predict(prediction_inputs, batch_size=4096, verbose=1)
     print(f"Inference completed in {time.time() - start_pred:.2f}s")
     print(f"Raw model output shape: {preds.shape}, sample values: {preds[:5].ravel()}")
 
@@ -891,48 +1303,49 @@ def predict_mutations(
     print(f"Final predictions shape: {predictions_reshaped.shape}  (positions × [A,T,G,C])")
     print(f"Sample predictions (first 5 positions):\n{predictions_reshaped[:5]}")
 
-    np.save('predictions.npy', predictions_reshaped)
-    print("Predictions saved to 'predictions.npy'")
-
     return predictions_reshaped
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Standalone debugging entry point
 # ---------------------------------------------------------------------------
 
-genome_sequence = get_sequence()
+if __name__ == "__main__":
+    genome_sequence = get_sequence()
 
-node_ids = [
-    "EGY/CCHE57357_Wave_3_A029/2021|MZ380261.1|2021-05-11"
-]
+    node_ids = [
+        "EGY/CCHE57357_Wave_3_A029/2021|MZ380261.1|2021-05-11"
+    ]
 
-mutations = parse_mutations(node_ids[0])
-depth = get_sample_depth(depth_file, node_ids[0])
+    mutations = parse_mutations(node_ids[0])
+    depth = get_sample_depth(depth_file, node_ids[0])
 
-features = cache_precomputed_features(
-    cache_path=cache_path,
-    genome_seq=construct_variant_genome(genome_sequence, mutations),
-    mutations=mutations,
-    codon_mapper=json.load(open(codon_mapping_path)),
-    config_file=configs(),
-    node_ids=node_ids,
-    elapsed_day=110,
-    depth=depth,
-    protein_regions=None,
-)
+    with open(codon_mapping_path) as f:
+        codon_mapping = json.load(f)
 
-predictions = predict_mutations(
-    cache_path=cache_path,
-    genome_seq=genome_sequence,
-    mutations=mutations,
-    codon_mapper=codon_mapping_path,
-    config_file=configs(),
-    node_ids=node_ids[0],
-    elapsed_day=130,
-    depth=depth,
-    protein_regions=None,
-)
+    features = cache_precomputed_features(
+        cache_path=cache_path,
+        genome_seq=construct_variant_genome(genome_sequence, mutations),
+        mutations=mutations,
+        codon_mapper=codon_mapping,
+        config_file=configs(),
+        node_ids=node_ids,
+        elapsed_day=110,
+        depth=depth,
+        protein_regions=None,
+    )
 
-end_time2 = time.time()
-print(f"Total runtime: {end_time2 - start_time:.2f}s")
+    predictions = predict_mutations(
+        cache_path=cache_path,
+        genome_seq=genome_sequence,
+        mutations=mutations,
+        codon_mapper=codon_mapping_path,
+        config_file=configs(),
+        node_ids=node_ids[0],
+        elapsed_day=130,
+        depth=depth,
+        protein_regions=None,
+    )
+
+    end_time2 = time.time()
+    print(f"Total runtime: {end_time2 - start_time:.2f}s")

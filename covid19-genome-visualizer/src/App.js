@@ -16,6 +16,8 @@ import logo from "./CovMutexLogo-removebg-preview.png";
 import Contact from "./components/Contact";
 import Nav from "./components/Nav";
 import { About } from "./components/About";
+import KnownHotspotCaseStudyPage from "./components/KnownHotspotCaseStudyPage";
+import SpikeMutationPanel from "./components/SpikeMutationPanel";
  
 
 
@@ -40,12 +42,15 @@ function App() {
     {}
   );
   const [protein_mutation_probs, setProteinMutationProbs] = useState({});
+  const [priestAnnotation, setPriestAnnotation] = useState(null);
+  const [selectedAlgorithm, setSelectedAlgorithm] = useState(null);
   const API_URL = process.env.REACT_APP_API_URL;
 
   // Reset `selectedProteinRegion` on navigation
   useEffect(() => {
     if (location.pathname === "/") {
       dispatch(resetProteinRegion());
+      setSelectedAlgorithm(null);
     }
   }, [location.pathname, dispatch]);
 
@@ -68,7 +73,10 @@ function App() {
 // In App.js
 const onSubmit = async (nodeId, elapsedDay, selectedModel, event) => {
   setDataLoading(true);
+  setPriestAnnotation(null);
+  setSelectedAlgorithm(selectedModel);
   try {
+    const priestOnly = selectedModel === "PRIEST";
     // === FETCH 1: Get data based on user selection (for specific calcs) ===
     const response = await fetch(`${API_URL}/api/predict/`, {
       method: "POST",
@@ -89,11 +97,45 @@ const onSubmit = async (nodeId, elapsedDay, selectedModel, event) => {
     const data = await response.json();
 
     // Store protein-specific calculations from the first fetch
-    setProteinRegionPossibilities(data.proteinRegionPossibilities);
-    setProteinMutationProbs(data.protein_mutation_probs);
+    setProteinRegionPossibilities(data.proteinRegionPossibilities || {});
+    setProteinMutationProbs(data.protein_mutation_probs || {});
+    setPriestAnnotation(
+      priestOnly
+        ? {
+            selected_node: data.selected_node,
+            selected_node_name: data.selected_node_name,
+            selected_node_accession: data.selected_node_accession,
+            node_date: data.node_date,
+            priest_period: data.priest_period,
+            priest_period_available: data.priest_period_available,
+            priest_score_method: data.priest_score_method,
+            spike_mutations: data.spike_mutations || [],
+            synonymous_spike_mutations: data.synonymous_spike_mutations || [],
+            priest_summary: data.priest_summary || null,
+          }
+        : null
+    );
 
     let finalGenomeData = data.genomeData;
     let finalGenomeSequence = data.genomeSequence;
+
+    if (priestOnly) {
+      setGenomeData([]);
+      setGenomeSequence(data.genomeSequence || "");
+      setProteinMutationProbs({});
+      dispatch(
+        setDataset({
+          dataset: [],
+          genome: data.genomeSequence || "",
+          pr_poss: data.proteinRegionPossibilities || {},
+          isSelected: true,
+          protein_mutation_probs: {},
+          selectedProteinRegion: null,
+        })
+      );
+      navigate("/genome-mutation-visualization");
+      return;
+    }
 
     // === FETCH 2 (Conditional): If a region was selected, get the FULL genome ===
     // This ensures our chart always has the complete, correct data source.
@@ -140,7 +182,7 @@ const onSubmit = async (nodeId, elapsedDay, selectedModel, event) => {
 };
 
   return (
-    <div className="overflow-y-hidden">
+    <div className="overflow-x-hidden">
       <Nav />
       <Routes>
         <Route
@@ -155,7 +197,9 @@ const onSubmit = async (nodeId, elapsedDay, selectedModel, event) => {
           element={
             <div className="bg-[#f6f7f9] relative">
               <h1 className="text-center pt-4 pb-0 font-bold text-xl">
-                Genome Sequence Mutation Visualization
+                {selectedAlgorithm === "PRIEST"
+                  ? "PRIEST Spike Site Annotation"
+                  : "Genome Sequence Mutation Visualization"}
               </h1>
               <div className="absolute top-0 flex justify-center items-center ">
                 <img
@@ -164,19 +208,28 @@ const onSubmit = async (nodeId, elapsedDay, selectedModel, event) => {
                   alt="Covidmutext Logo"
                 />
               </div>
-              <div className="block md:flex md:justify-normal">
-                {genomeData && genomeData.length > 0 && (
-                  <GenomeChart
-                    genomeData={genomeData}
-                    genomeSequence={genomeSequence}
-                  />
-                )}
-                {!selectedProteinRegion && (
-                  <DoughnutChart data={protein_mutation_probs} />
-                )}
-              </div>
+              {selectedAlgorithm === "PRIEST" ? (
+                <SpikeMutationPanel annotation={priestAnnotation} />
+              ) : (
+                <div className="block md:flex md:justify-normal">
+                  {genomeData && genomeData.length > 0 && (
+                    <GenomeChart
+                      genomeData={genomeData}
+                      genomeSequence={genomeSequence}
+                    />
+                  )}
+                  {!selectedProteinRegion && (
+                    <DoughnutChart data={protein_mutation_probs} />
+                  )}
+                </div>
+              )}
             </div>
           }
+        />
+        <Route
+          exact
+          path="/case-studies/known-hotspot"
+          element={<KnownHotspotCaseStudyPage />}
         />
         <Route exact path="/contact-us" element={<Contact />} />
         <Route exact path="/about" element={<About />} />

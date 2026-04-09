@@ -11,6 +11,14 @@ const Nav = () => {
           </Link>
         </li>
         <li>
+          <Link
+            to="/case-studies/known-hotspot"
+            className="hover:text-blue-200 ml-[3rem]"
+          >
+            Hotspot Case Study
+          </Link>
+        </li>
+        <li>
           <Link to="/about" className="hover:text-blue-200 ml-[3rem]">
             About
           </Link>

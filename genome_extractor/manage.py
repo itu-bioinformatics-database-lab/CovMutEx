@@ -4,9 +4,12 @@
 import os
 import sys
 
+from genome_extractor.runtime_env import configure_runtime_tempdir
+
 
 def main():
     """Run administrative tasks."""
+    configure_runtime_tempdir()
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'genome_extractor.settings')
     try:
         from django.core.management import execute_from_command_line

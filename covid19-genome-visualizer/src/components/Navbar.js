@@ -36,10 +36,14 @@ function Navbar({ onNodeSelect, onSubmit }) {
   );
   const [_nodeId, setNodeId] = useState(null);
   const [_elapsedDay, setElapsedDay] = useState("");
-  const [selectedModel, setSelectedModel] = useState(modelList[1]?.path || null);
-  const defaultModel = modelList[1] || null;
+  const defaultModel =
+    modelList.find((model) => model.path === "balanced_data_model") ||
+    modelList[0] ||
+    null;
+  const [selectedModel, setSelectedModel] = useState(defaultModel?.path || null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const isPriestSelected = selectedModel === "PRIEST";
 
   const handleElapsedDayChange = (e) => {
     const value = Math.max(0, Number(e.target.value));
@@ -64,8 +68,8 @@ function Navbar({ onNodeSelect, onSubmit }) {
     console.log("Elapsed Days:", _elapsedDay);
     console.log("Selected Model:", selectedModel);
 
-    if (_nodeId && _elapsedDay && selectedModel) {
-      if (!selectedProteinRegion) {
+    if (_nodeId && selectedModel && (isPriestSelected || _elapsedDay)) {
+      if (isPriestSelected || !selectedProteinRegion) {
         dispatch(resetProteinRegion());
       }
       console.log("onNodeSelect called with params:", {
@@ -104,7 +108,7 @@ function Navbar({ onNodeSelect, onSubmit }) {
         {/* Prediction Model */}
         <div className="w-full">
           <label className="text-sm mb-1 text-blue-600 font-semibold block">
-            Prediction Model{" "}
+            Algorithm{" "}
             <span className="text-sm text-red-300 font-semibold">*</span>
           </label>
           <Select
@@ -122,7 +126,7 @@ function Navbar({ onNodeSelect, onSubmit }) {
             
             } : null
             }
-            placeholder="Select Prediction Model"
+            placeholder="Select Algorithm"
             styles={customStyles}
             name="model"
           />
@@ -143,10 +147,12 @@ function Navbar({ onNodeSelect, onSubmit }) {
           <div className="flex-1">
             <label className="text-sm mb-1 font-semibold block text-blue-600">
               Elapsed Days{" "}
-              <span className="text-sm text-red-300 font-semibold">*</span>
+              {!isPriestSelected ? (
+                <span className="text-sm text-red-300 font-semibold">*</span>
+              ) : null}
             </label>
             <Input
-              required
+              required={!isPriestSelected}
               value={_elapsedDay}
               onChange={handleElapsedDayChange}
               type="number"
@@ -166,10 +172,11 @@ function Navbar({ onNodeSelect, onSubmit }) {
             </label>
             <Select
               className="w-full text-sm"
+              isDisabled={isPriestSelected}
               onChange={handleProteinRegionChange}
               options={[ { label: "\u00A0", value: "" }, ...Object.keys(proteinRegions).map((pr) => ({ label: pr, value: pr, })) ]}
               styles={customStyles}
-              placeholder="Optional"
+              placeholder={isPriestSelected ? "Not used for PRIEST" : "Optional"}
             />
           </div>
         </div>
@@ -182,7 +189,7 @@ function Navbar({ onNodeSelect, onSubmit }) {
             type="submit"
             className="w-full bg-blue-500 flex justify-center items-center gap-2"
           >
-            Predict <MdOutlineCreate className="h-4 w-4" />
+            Explore Mutations <MdOutlineCreate className="h-4 w-4" />
           </Button>
         </div>
       </form>

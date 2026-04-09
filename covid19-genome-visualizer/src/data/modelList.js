@@ -1,5 +1,9 @@
 export const modelList = [
   {
+    name: "PRIEST (Spike Site Annotation)",
+    path: "PRIEST",
+  },
+  {
     name: "Single-input Ensembl (Prediction f1 score: 0.78)",
     path: "single_input_ensemble_model_best",
   },

@@ -1,33 +1,46 @@
-*.h5
-*.csv
-*.zip
-*.h5
-*.csv
-*.zip
-*.so
-*.dll
-*.pyd
-venv/
-genome_extractor/venv/
-genome_extractor/venv/
-genome_extractor/venv/
-*.so*
+# Python
 __pycache__/
-*.pyc
-# LFS files to ignore
-genome_extractor/venv/lib/python3.11/site-packages/tensorflow/*.so
-genome_extractor/genome/prediction_results.json
-genome_extractor/node_modules/
-genome_extractor/package*.json
-env/
-myvenv/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
 
-# General ignores
-*.so
-*.json
-genome_extractor/covid19_models/models/
+# Django
+db.sqlite3
+*.sock
+staticfiles/
+media/
+genome_extractor/.tmp/
+
+# Large binary / cache files
+*.h5
+*.npy
+*.pkl
+*.pt
+*.pth
+predictions_4_per_position.csv
+node_features.h5
+phylo_features_cache.h5
+features.h5
+*.mp4
+
+# ML models (large weight files — transfer via rsync)
 genome_extractor/models/
-genome_extractor/staticfiles/
-*.mp4
-covid19-genome-visualizer/src/CovMutExVideo.mp4
-*.mp4
+genome_extractor/covid19_models/
+
+# Node / React
+node_modules/
+covid19-genome-visualizer/build/
+
+# PRIEST raw data
+PRIEST/src/PRIEST_data/
+
+# macOS
+.DS_Store
+
+# Env
+.env
+*.env

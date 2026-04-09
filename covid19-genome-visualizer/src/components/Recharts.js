@@ -98,7 +98,7 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
   const viewRangeToPreserve = useRef(null);
   const [activeProtein, setActiveProtein] = useState(null);
   const [showFullAnnotation, setShowFullAnnotation] = useState(false);
-  const [weblogoLoading, setWeblogoLoading] = useState(false);
+  const [, setWeblogoLoading] = useState(false);
 
   const selectedProteinRegion = useSelector(
     (state) => state.genome.selectedProteinRegion
@@ -163,22 +163,24 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
 
   const createAnnotations = () => {
     const chartInstance = chartRef.current?.chartInstance;
-    if (chartInstance?.weblogoMode || (focusedProtein && !showFullAnnotation && !activeProtein)) { return []; }
+    if (chartInstance?.weblogoMode) { return []; }
     const mapPos = (genomePosition) => {
       if (highResViewRange) { return genomePosition - highResViewRange.min; }
       const startOffset = chartViewData.offsetForView;
       return (genomePosition - startOffset) / currentDecimateFactor;
     };
+    let regionAnnotations = [];
     if (activeProtein) {
       const [start, end] = proteinRegions[activeProtein].split("-").map(Number);
-      return [{ display: true, type: "box", xMin: mapPos(start), xMax: mapPos(end), yMin: 0, yMax: 3, backgroundColor: proteinRegionColorMapAnnotations[activeProtein], borderColor: proteinRegionColorMap[activeProtein], borderWidth: 2, label: { content: activeProtein, enabled: true, position: "start" }, z: 10 }];
+      regionAnnotations = [{ display: true, type: "box", xMin: mapPos(start), xMax: mapPos(end), yMin: 0.001, yMax: 1, backgroundColor: proteinRegionColorMapAnnotations[activeProtein], borderColor: proteinRegionColorMap[activeProtein], borderWidth: 2, label: { content: activeProtein, enabled: true, position: "start" }, z: 10 }];
     } else if (showFullAnnotation) {
-      return Object.keys(proteinRegions).map((key) => {
+      regionAnnotations = Object.keys(proteinRegions).map((key) => {
         const [start, end] = proteinRegions[key].split("-").map(Number);
-        return { display: true, type: "box", xMin: mapPos(start), xMax: mapPos(end), yMin: 0, yMax: 3, backgroundColor: proteinRegionColorMapAnnotations[key], borderColor: proteinRegionColorMap[key], borderWidth: 2, label: { content: key, enabled: true, position: "start" }, z: 10 };
+        return { display: true, type: "box", xMin: mapPos(start), xMax: mapPos(end), yMin: 0.001, yMax: 1, backgroundColor: proteinRegionColorMapAnnotations[key], borderColor: proteinRegionColorMap[key], borderWidth: 2, label: { content: key, enabled: true, position: "start" }, z: 10 };
       });
     }
-    return [];
+
+    return regionAnnotations;
   };
   
 
@@ -452,26 +454,15 @@ const GenomeChart = ({ genomeData, genomeSequence }) => {
 const mutationDetails = [];
 decimatedLabels.forEach((label, idx) => {
   const segmentStartPos = dataStartPosition + (idx * dataEffectiveDecimateFactor);
-  const segmentEndPos = Math.min(30000, segmentStartPos + dataEffectiveDecimateFactor);
   const mutationProbs = { A: 0, T: 0, G: 0, C: 0 };
-  let validPositions = 0;
   const refNucleotide = genomeSequence[segmentStartPos];
   const refIndex = nucleotides.indexOf(refNucleotide);
   if (refIndex === -1) return;
 
-  for (let absolutePos = segmentStartPos; absolutePos < segmentEndPos; absolutePos++) {
-    if (absolutePos < 0 || absolutePos >= (genomeData[0]?.length || 0)) continue;
-    nucleotides.forEach((nuc, i) => {
-      if (i !== refIndex) {
-        mutationProbs[nuc] += genomeData[i]?.[absolutePos] || 0;
-      }
-    });
-    validPositions++;
-  }
-
-  if (validPositions > 0) {
-    nucleotides.forEach(nuc => { mutationProbs[nuc] /= validPositions; });
-  }
+  nucleotides.forEach((nuc, i) => {
+    const normalizedValue = dataForChart[i]?.[idx] || 0;
+    mutationProbs[nuc] = i === refIndex ? 0 : normalizedValue;
+  });
 
   const totalMutProb = nucleotides
     .filter(nuc => nuc !== refNucleotide)
@@ -516,7 +507,7 @@ decimatedLabels.forEach((label, idx) => {
         y: { 
           stacked: true, 
           type: 'logarithmic', 
-          min: 0.00001, 
+          min: 0.001, 
           max: 1.0,
           title: {
             display: true,
@@ -626,7 +617,7 @@ decimatedLabels.forEach((label, idx) => {
       chartInstance.options.plugins.annotation.annotations = createAnnotations();
       chartInstance.update();
     }
-  }, [activeProtein, showFullAnnotation]);
+  }, [activeProtein, showFullAnnotation, focusedProtein]);
 
   const handleProteinHover = (protein) => setActiveProtein(protein);
   const handleProteinLeave = () => setActiveProtein(null);
