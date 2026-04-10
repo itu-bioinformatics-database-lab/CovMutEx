@@ -216,6 +216,14 @@ const KnownHotspotCaseStudyPage = () => {
     : "Ranking Score";
   const rankedRows = analysis?.ranked_rows ?? [];
   const visibleRows = showAllRows ? rankedRows : rankedRows.slice(0, 100);
+  const appliedTopK = String(metadata?.applied_top_k ?? "");
+  const appliedElapsedDay = String(scoringContext?.elapsed_day ?? "");
+  const hasPendingChanges =
+    Boolean(analysis) &&
+    (controls.selectedModel !== selectedScoringModel ||
+      controls.nodeId !== (scoringContext?.node_id || "") ||
+      controls.topK !== appliedTopK ||
+      (!isPriestSelected && controls.elapsedDay !== appliedElapsedDay));
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
@@ -371,6 +379,14 @@ const KnownHotspotCaseStudyPage = () => {
               </button>
             </div>
           </form>
+
+          {hasPendingChanges ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Settings changed, but the hotspot analysis below is still showing
+              the last submitted run. Click <strong>Run analysis</strong> to
+              recompute the metrics for the newly selected model or Top-K.
+            </div>
+          ) : null}
         </div>
 
         {loading ? (
