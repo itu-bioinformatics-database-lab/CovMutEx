@@ -10,6 +10,7 @@ from genome.delta_omicron_retrospective import (
     build_delta_omicron_retrospective_payload,
     compute_overlap_metrics,
     extract_spike_site_score_rows,
+    load_delta_context_option_catalog,
     normalize_ranked_site_scores,
     parse_compact_nucleotide_mutation,
     rank_spike_site_rows,
@@ -176,6 +177,21 @@ class DeltaOmicronRetrospectiveUnitTests(SimpleTestCase):
         self.assertAlmostEqual(metrics["precision_at_k"], 0.5)
         self.assertAlmostEqual(metrics["recall_against_omicron_sites"], 0.25)
         self.assertEqual(metrics["overlap_positions"], [446])
+
+    def test_context_catalog_surfaces_all_seven_precomputed_variants(self):
+        catalog = load_delta_context_option_catalog()
+
+        self.assertEqual(catalog["total_count"], 7)
+        self.assertEqual(catalog["returned_count"], 7)
+        self.assertEqual(len(catalog["options"]), 7)
+        self.assertIn(
+            "XBB.1.16|precomputed_consensus",
+            {option["node_id"] for option in catalog["options"]},
+        )
+        self.assertIn(
+            "BA.2.86|precomputed_consensus",
+            {option["node_id"] for option in catalog["options"]},
+        )
 
     def test_payload_contains_expected_schema_and_flags(self):
         predictions = np.array(

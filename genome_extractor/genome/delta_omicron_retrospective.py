@@ -84,9 +84,6 @@ def _build_precomputed_variant_context(
             "consensus_threshold": PRECOMPUTED_MUTATION_CONSENSUS_THRESHOLD,
             "sort_order": sort_order,
             "elapsed_days": elapsed_days,
-            # Variants where PRIEST training data covers the emergence period
-            # are hidden from the UI to keep the case study a clean held-out
-            # evaluation. They remain accessible via direct API requests.
             "hidden_from_ui": hidden_from_ui,
         },
     )
@@ -109,8 +106,6 @@ PRECOMPUTED_VARIANT_CONTEXTS = dict(
             node_date="2023-01-01",
             source_file="XBB.1.16nucleotide-mutations.csv",
             sort_order=2,
-            # Hidden: PRIEST training data covers Q1-2023
-            hidden_from_ui=True,
         ),
         _build_precomputed_variant_context(
             pangolin_lineage="BA.2.86",
@@ -119,8 +114,6 @@ PRECOMPUTED_VARIANT_CONTEXTS = dict(
             node_date="2023-07-01",
             source_file="BA2.86.nucleotide-mutations.csv",
             sort_order=3,
-            # Hidden: PRIEST training data covers Q3-2023
-            hidden_from_ui=True,
         ),
         _build_precomputed_variant_context(
             pangolin_lineage="KP.2",
