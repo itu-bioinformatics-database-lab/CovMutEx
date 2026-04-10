@@ -836,7 +836,8 @@ def summarize_found_mutation_support(node_context, aa_positions):
 
 def compute_overlap_metrics(top_k_positions, omicron_positions, proximity_window=3):
     top_k_set = set(top_k_positions)
-    omicron_set = set(omicron_positions)
+    omicron_position_list = sorted(set(omicron_positions))
+    omicron_set = set(omicron_position_list)
 
     # --- Exact overlap ---
     exact_overlap_positions = sorted(top_k_set & omicron_set)
@@ -845,7 +846,7 @@ def compute_overlap_metrics(top_k_positions, omicron_positions, proximity_window
     # --- Proximity overlap (within ±proximity_window amino acids) ---
     proximity_hits = []
     for hotspot_pos in sorted(top_k_set):
-        for omicron_pos in omicron_set:
+        for omicron_pos in omicron_position_list:
             if abs(hotspot_pos - omicron_pos) <= proximity_window:
                 proximity_hits.append({
                     "hotspot_position": hotspot_pos,
@@ -890,6 +891,63 @@ def compute_overlap_metrics(top_k_positions, omicron_positions, proximity_window
     }
 
 
+def build_top_k_metric_sweep(ranked_rows, comparison_positions, proximity_window=3):
+    comparison_position_list = sorted(set(comparison_positions))
+    comparison_position_set = set(comparison_position_list)
+    comparison_site_count = len(comparison_position_list)
+    exact_overlap_count = 0
+    proximity_overlap_count = 0
+    exact_overlap_positions_seen = set()
+    covered_comparison_positions = set()
+    sweep_rows = []
+
+    for rank, row in enumerate(ranked_rows, start=1):
+        aa_position = row["aa_position"]
+
+        if (
+            aa_position in comparison_position_set
+            and aa_position not in exact_overlap_positions_seen
+        ):
+            exact_overlap_positions_seen.add(aa_position)
+            exact_overlap_count += 1
+
+        matched_comparison_position = next(
+            (
+                comparison_position
+                for comparison_position in comparison_position_list
+                if abs(aa_position - comparison_position) <= proximity_window
+            ),
+            None,
+        )
+        if matched_comparison_position is not None:
+            proximity_overlap_count += 1
+            covered_comparison_positions.add(matched_comparison_position)
+
+        precision_at_k = exact_overlap_count / rank
+        recall_against_comparison_sites = (
+            exact_overlap_count / comparison_site_count if comparison_site_count else 0.0
+        )
+        proximity_precision_at_k = proximity_overlap_count / rank
+        proximity_recall = (
+            len(covered_comparison_positions) / comparison_site_count
+            if comparison_site_count else 0.0
+        )
+
+        sweep_rows.append(
+            {
+                "top_k": rank,
+                "overlap_count": exact_overlap_count,
+                "precision_at_k": precision_at_k,
+                "recall_against_comparison_sites": recall_against_comparison_sites,
+                "proximity_overlap_count": proximity_overlap_count,
+                "proximity_precision_at_k": proximity_precision_at_k,
+                "proximity_recall": proximity_recall,
+            }
+        )
+
+    return sweep_rows
+
+
 def build_known_hotspot_case_study_payload(
     predictions,
     reference_genome_sequence,
@@ -929,6 +987,11 @@ def build_known_hotspot_case_study_payload(
     applied_top_k = min(requested_top_k, len(ranked_rows))
     top_k_positions = [row["aa_position"] for row in ranked_rows[:applied_top_k]]
     metrics = compute_overlap_metrics(top_k_positions, comparison_positions)
+    top_k_sweep = build_top_k_metric_sweep(
+        ranked_rows,
+        comparison_positions,
+        proximity_window=metrics["proximity_window"],
+    )
     found_support_summary = summarize_found_mutation_support(
         validated_context,
         metrics["overlap_positions"],
@@ -1042,6 +1105,7 @@ def build_known_hotspot_case_study_payload(
         "omicron_positions": comparison_positions,
         "overlap_positions": metrics["overlap_positions"],
         "proximity_overlap_positions": metrics["proximity_overlap_positions"],
+        "top_k_sweep": top_k_sweep,
         "metrics": {
             "overlap_count": metrics["overlap_count"],
             "precision_at_k": metrics["precision_at_k"],

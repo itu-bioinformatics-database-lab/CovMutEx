@@ -8,6 +8,7 @@ from genome.delta_omicron_retrospective import (
     RetrospectiveCaseStudyValidationError,
     build_precomputed_variant_mutation_tuples,
     build_delta_omicron_retrospective_payload,
+    build_top_k_metric_sweep,
     compute_overlap_metrics,
     extract_spike_site_score_rows,
     load_delta_context_option_catalog,
@@ -193,6 +194,36 @@ class DeltaOmicronRetrospectiveUnitTests(SimpleTestCase):
             {option["node_id"] for option in catalog["options"]},
         )
 
+    def test_top_k_metric_sweep_tracks_exact_and_proximity_metrics(self):
+        sweep_rows = build_top_k_metric_sweep(
+            [
+                {"aa_position": 446},
+                {"aa_position": 452},
+                {"aa_position": 478},
+            ],
+            [446, 455, 478],
+            proximity_window=3,
+        )
+
+        self.assertEqual([row["top_k"] for row in sweep_rows], [1, 2, 3])
+        self.assertAlmostEqual(sweep_rows[0]["precision_at_k"], 1.0)
+        self.assertAlmostEqual(
+            sweep_rows[0]["recall_against_comparison_sites"],
+            1 / 3,
+        )
+        self.assertAlmostEqual(sweep_rows[1]["precision_at_k"], 0.5)
+        self.assertAlmostEqual(
+            sweep_rows[1]["recall_against_comparison_sites"],
+            1 / 3,
+        )
+        self.assertAlmostEqual(sweep_rows[1]["proximity_precision_at_k"], 1.0)
+        self.assertAlmostEqual(sweep_rows[1]["proximity_recall"], 2 / 3)
+        self.assertAlmostEqual(sweep_rows[2]["precision_at_k"], 2 / 3)
+        self.assertAlmostEqual(
+            sweep_rows[2]["recall_against_comparison_sites"],
+            2 / 3,
+        )
+
     def test_payload_contains_expected_schema_and_flags(self):
         predictions = np.array(
             [
@@ -263,12 +294,19 @@ class DeltaOmicronRetrospectiveUnitTests(SimpleTestCase):
         self.assertIn("overlap_positions", payload)
         self.assertIn("metrics", payload)
         self.assertIn("ranked_rows", payload)
+        self.assertIn("top_k_sweep", payload)
         self.assertEqual(payload["top_k_positions"], [1])
         self.assertEqual(payload["comparison_positions"], [1, 4])
         self.assertEqual(payload["overlap_positions"], [])
         self.assertEqual(payload["metrics"]["precision_at_k"], 0.0)
         self.assertEqual(payload["metrics"]["comparison_site_count"], 2)
         self.assertEqual(payload["metrics"]["found_mutation_count"], 0)
+        self.assertEqual(payload["top_k_sweep"][0]["top_k"], 1)
+        self.assertEqual(payload["top_k_sweep"][-1]["top_k"], len(payload["ranked_rows"]))
+        self.assertAlmostEqual(
+            payload["top_k_sweep"][payload["metadata"]["applied_top_k"] - 1]["precision_at_k"],
+            payload["metrics"]["precision_at_k"],
+        )
         self.assertTrue(
             all(
                 {
