@@ -2,9 +2,16 @@ import json
 import os
 import time
 import h5py
+import hashlib
 import numpy as np
 import pandas as pd
 from .configs import configs
+from .cache_paths import (
+    CACHE_DIR,
+    NODE_FEATURES_CACHE_PATH,
+    PHYLO_FEATURES_CACHE_PATH,
+    REFERENCE_FEATURES_CACHE_PATH,
+)
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import tensorflow as tf
 
@@ -21,6 +28,11 @@ depth_file = os.path.join(base_dir, 'depth_date.json')
 genome_extractor_dir = os.path.dirname(base_dir)
 ROOT_PATH = os.path.dirname(genome_extractor_dir)
 model_path = os.path.join(genome_extractor_dir, 'covid19_models', "models", "balanced_data_model.keras")
+DEFAULT_TEMPLATE_CACHE_FORMAT = "default_atgc_template_v1"
+NODE_RAW_CACHE_FORMAT = "default_atgc_node_raw_v1"
+NODE_REQUEST_CACHE_FORMAT = "default_atgc_node_request_v1"
+
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 print(f"Base dir: {base_dir}")
 print(f"Genome extractor dir: {genome_extractor_dir}")
@@ -83,6 +95,77 @@ def get_sequence():
     return genome
 
 
+def add_terminal_padding_nucleotide(genome_seq, nucleotide="A"):
+    if not genome_seq:
+        return nucleotide
+    return genome_seq + nucleotide
+
+
+def get_reference_protein_regions(config_file=None):
+    cfg = config_file() if callable(config_file) else config_file
+    if cfg is None:
+        cfg = configs()
+    return cfg.get("protein regions", {})
+
+
+def _encode_raw_rows(raw_rows):
+    return [json.dumps(row).encode("utf-8") for row in raw_rows]
+
+
+def _decode_raw_rows(raw_encoded):
+    return [json.loads(row.decode("utf-8") if isinstance(row, bytes) else row) for row in raw_encoded]
+
+
+def _write_raw_rows_dataset(h5_parent, dataset_name, raw_rows):
+    raw_encoded = _encode_raw_rows(raw_rows)
+    dt = h5py.special_dtype(vlen=bytes)
+    raw_ds = h5_parent.create_dataset(dataset_name, (len(raw_encoded),), dtype=dt)
+    for i, row in enumerate(raw_encoded):
+        raw_ds[i] = row
+
+
+def _load_reference_template_raw_rows(features_h5_path):
+    with h5py.File(features_h5_path, "r") as h5f:
+        return _decode_raw_rows(h5f["features_raw"][:])
+
+
+def _apply_context_to_raw_rows(raw_rows, elapsed_day=0, depth=0):
+    for row in raw_rows:
+        row[37] = float(elapsed_day or 0)
+        row[38] = float(depth or 0)
+    return raw_rows
+
+
+def _slice_preprocessed_features_by_regions(features_np, protein_regions, nucleotides_per_position=4):
+    if not protein_regions:
+        return np.nan_to_num(features_np.astype(np.float32))
+
+    region_slices = []
+    for _, (start, end) in protein_regions.items():
+        row_start = start * nucleotides_per_position
+        row_end = (end + 1) * nucleotides_per_position
+        region_slices.append(features_np[row_start:row_end])
+
+    if not region_slices:
+        return np.zeros((0, features_np.shape[1]), dtype=np.float32)
+    return np.nan_to_num(np.concatenate(region_slices, axis=0).astype(np.float32))
+
+
+def _copy_raw_rows(raw_rows):
+    return [list(row) for row in raw_rows]
+
+
+def _node_raw_cache_key(node_id, k=30):
+    key_source = f"{node_id or '__reference__'}|{k}"
+    digest = hashlib.md5(key_source.encode("utf-8")).hexdigest()[:12]
+    safe_prefix = "reference" if not node_id else "node"
+    return f"{safe_prefix}_{digest}_k_{k}"
+
+
+def _node_request_cache_key(elapsed_day=0, depth=0):
+    return f"day_{int(elapsed_day or 0)}__depth_{int(depth or 0)}"
+
+
 def parse_mutations(nodeId):
     mutations = []
     with open(mutations_txt_path, 'r') as file:
@@ -103,7 +186,7 @@ def parse_mutations(nodeId):
 # Phylogenetic helpers
 # ---------------------------------------------------------------------------
 
-CACHE_P_FILE = 'phylo_features_cache.h5'
+CACHE_P_FILE = PHYLO_FEATURES_CACHE_PATH
 
 # Hiçbir yerde kullanılmıyor (extract_phylogenetic_features)
 def normalize_features(features):
@@ -453,6 +536,209 @@ def precompute_and_cache_ref_features(
     return dataset_np
 
 # ---------------------------------------------------------------------------
+# NEW Reference genome feature extraction  (stores both RAW and preprocessed lists)
+# ---------------------------------------------------------------------------
+
+def precompute_default_feature_template_cache(
+    genome_txt_path, codon_mapping_path, config_file, output_h5_path, k=30
+):
+    """
+    Build the canonical padded reference template for the active ATGC extractor.
+
+    Stored artifacts:
+        features_raw: raw rows for the padded reference genome
+        features:     preprocess_matrix(features_raw)
+    """
+    genome_seq = get_sequence()
+    genome_md5 = hashlib.md5(genome_seq.encode("utf-8")).hexdigest()
+    cfg = config_file() if callable(config_file) else config_file
+
+    if os.path.exists(output_h5_path):
+        try:
+            with h5py.File(output_h5_path, "r") as h5f:
+                if (
+                    h5f.attrs.get("cache_format") == DEFAULT_TEMPLATE_CACHE_FORMAT
+                    and int(h5f.attrs.get("genome_length", -1)) == len(genome_seq)
+                    and h5f.attrs.get("genome_md5") == genome_md5
+                    and int(h5f.attrs.get("nucleotides_per_position", -1)) == 4
+                    and int(h5f.attrs.get("k", -1)) == k
+                ):
+                    print(f"Using cached reference ATGC template from {output_h5_path}")
+                    return h5f["features"][:]
+        except Exception:
+            pass
+
+    print("Reference ATGC template missing or incompatible - rebuilding...")
+    raw_rows = build_all_raw_feature_rows(
+        genome_seq=genome_seq,
+        codon_mapper=codon_mapping_path,
+        config_file=cfg,
+        elapsed_day=0,
+        depth=0,
+        protein_regions=None,
+        k=k,
+    )
+    features_np = preprocess_matrix(raw_rows, expected_size=205)
+
+    with h5py.File(output_h5_path, "w") as h5f:
+        h5f.create_dataset("features", data=features_np, compression="gzip", compression_opts=9)
+        _write_raw_rows_dataset(h5f, "features_raw", raw_rows)
+        h5f.attrs["genome_length"] = len(genome_seq)
+        h5f.attrs["vector_length"] = features_np.shape[1]
+        h5f.attrs["nucleotides_per_position"] = 4
+        h5f.attrs["cache_format"] = DEFAULT_TEMPLATE_CACHE_FORMAT
+        h5f.attrs["k"] = k
+        h5f.attrs["genome_md5"] = genome_md5
+        h5f.attrs["elapsed_day"] = 0
+        h5f.attrs["depth"] = 0
+        h5f.attrs["is_padded_reference"] = True
+
+    print(f"Reference ATGC template cached to {output_h5_path}")
+    return features_np
+
+
+def _build_variant_rows_for_positions(
+    genome_seq,
+    positions,
+    codon_mapper,
+    config_file,
+    elapsed_day=0,
+    depth=0,
+    k=30,
+):
+    all_rows = build_all_raw_feature_rows(
+        genome_seq=genome_seq,
+        codon_mapper=codon_mapper,
+        config_file=config_file,
+        elapsed_day=elapsed_day,
+        depth=depth,
+        protein_regions=None,
+        k=k,
+        selected_positions=positions,
+    )
+    rows_by_position = {}
+    for index, pos in enumerate(positions):
+        start = index * 4
+        rows_by_position[pos] = all_rows[start:start + 4]
+    return rows_by_position
+
+
+def cache_node_atgc_features(
+    cache_path,
+    node_id,
+    genome_seq,
+    mutations,
+    codon_mapper,
+    config_file,
+    elapsed_day=0,
+    depth=0,
+    protein_regions=None,
+    k=30,
+):
+    """
+    Cache mutation-aware ATGC features for a node on the full padded genome.
+
+    Disk cache stores a mutation-aware raw base per node with default context
+    (elapsed_day=0, depth=0). Request-specific preprocessing is derived from
+    that raw base on every request.
+    """
+    if not os.path.exists(REFERENCE_FEATURES_CACHE_PATH):
+        precompute_default_feature_template_cache(
+            genome_txt_path=genome_txt_path,
+            codon_mapping_path=codon_mapper,
+            config_file=config_file,
+            output_h5_path=REFERENCE_FEATURES_CACHE_PATH,
+            k=k,
+        )
+
+    cfg = config_file() if callable(config_file) else config_file
+    variant_md5 = hashlib.md5(genome_seq.encode("utf-8")).hexdigest()
+    raw_cache_key = _node_raw_cache_key(node_id=node_id, k=k)
+    request_cache_key = _node_request_cache_key(elapsed_day=elapsed_day, depth=depth)
+
+    with h5py.File(cache_path, "a") as hdf:
+        if raw_cache_key in hdf:
+            group = hdf[raw_cache_key]
+            if (
+                group.attrs.get("cache_format") == NODE_RAW_CACHE_FORMAT
+                and group.attrs.get("variant_genome_md5") == variant_md5
+                and group.attrs.get("node_id") == (node_id or "__reference__")
+            ):
+                print(f"Loading cached node raw features: {raw_cache_key}")
+                node_raw_base = _decode_raw_rows(group["features_raw"][:])
+                requests_group = group.require_group("requests")
+                if request_cache_key in requests_group:
+                    request_group = requests_group[request_cache_key]
+                    if (
+                        request_group.attrs.get("cache_format") == NODE_REQUEST_CACHE_FORMAT
+                        and request_group.attrs.get("elapsed_day") == float(elapsed_day or 0)
+                        and request_group.attrs.get("depth") == float(depth or 0)
+                    ):
+                        print(f"Loading cached node request features: {raw_cache_key}/{request_cache_key}")
+                        features_np = request_group["features"][:]
+                        return _slice_preprocessed_features_by_regions(features_np, protein_regions, 4)
+            else:
+                del hdf[raw_cache_key]
+                node_raw_base = None
+        else:
+            node_raw_base = None
+
+        if node_raw_base is None:
+            print(f"Building cached node raw features: {raw_cache_key}")
+            base_raw = _load_reference_template_raw_rows(REFERENCE_FEATURES_CACHE_PATH)
+            node_raw_base = _apply_context_to_raw_rows(_copy_raw_rows(base_raw), elapsed_day=0, depth=0)
+
+            if mutations:
+                affected_positions = get_affected_positions(mutations, len(genome_seq), k, protein_regions=None)
+                if affected_positions:
+                    variant_rows = _build_variant_rows_for_positions(
+                        genome_seq=genome_seq,
+                        positions=affected_positions,
+                        codon_mapper=codon_mapper,
+                        config_file=cfg,
+                        elapsed_day=0,
+                        depth=0,
+                        k=k,
+                    )
+                    for pos, rows in variant_rows.items():
+                        start = pos * 4
+                        node_raw_base[start:start + 4] = rows
+
+            group = hdf.create_group(raw_cache_key)
+            _write_raw_rows_dataset(group, "features_raw", node_raw_base)
+            group.create_group("requests")
+            group.attrs["cache_format"] = NODE_RAW_CACHE_FORMAT
+            group.attrs["node_id"] = node_id or "__reference__"
+            group.attrs["default_elapsed_day"] = 0.0
+            group.attrs["default_depth"] = 0.0
+            group.attrs["k"] = int(k)
+            group.attrs["genome_length"] = len(genome_seq)
+            group.attrs["nucleotides_per_position"] = 4
+            group.attrs["variant_genome_md5"] = variant_md5
+
+    request_raw = _apply_context_to_raw_rows(_copy_raw_rows(node_raw_base), elapsed_day=elapsed_day, depth=depth)
+
+    print(f"Bulk preprocessing {len(request_raw)} node rows from raw cache key: {raw_cache_key}")
+    features_np = np.nan_to_num(preprocess_matrix(request_raw, expected_size=205).astype(np.float32))
+
+    with h5py.File(cache_path, "a") as hdf:
+        group = hdf[raw_cache_key]
+        requests_group = group.require_group("requests")
+        if request_cache_key in requests_group:
+            del requests_group[request_cache_key]
+        request_group = requests_group.create_group(request_cache_key)
+        request_group.create_dataset("features", data=features_np, compression="gzip", compression_opts=9)
+        request_group.attrs["cache_format"] = NODE_REQUEST_CACHE_FORMAT
+        request_group.attrs["elapsed_day"] = float(elapsed_day or 0)
+        request_group.attrs["depth"] = float(depth or 0)
+        request_group.attrs["k"] = int(k)
+        request_group.attrs["vector_length"] = features_np.shape[1]
+        request_group.attrs["genome_length"] = len(genome_seq)
+        request_group.attrs["nucleotides_per_position"] = 4
+
+    return _slice_preprocessed_features_by_regions(features_np, protein_regions, 4)
+
+# ---------------------------------------------------------------------------
 # Variant processing helpers
 # ---------------------------------------------------------------------------
 
@@ -601,7 +887,7 @@ def cache_precomputed_features(
       5. Save preprocessed result to node_features.h5
       6. Return the preprocessed combined features
     """
-    _features_h5 = os.path.join(genome_extractor_dir, 'features.h5')
+    _features_h5 = REFERENCE_FEATURES_CACHE_PATH
     with h5py.File(_features_h5, 'r') as h5f:
         raw_encoded = h5f['features_raw'][:]
 
@@ -737,7 +1023,7 @@ def load_legacy_keras_model(model_path):
 
 def build_all_raw_feature_rows(
     genome_seq, codon_mapper, config_file,
-    elapsed_day=0, depth=0, protein_regions=None, k=30
+    elapsed_day=0, depth=0, protein_regions=None, k=30, selected_positions=None
 ):
     """
     Generates 4 raw feature rows per genome position (one per A/T/G/C candidate).
@@ -748,6 +1034,8 @@ def build_all_raw_feature_rows(
     Returns:
         list of raw feature rows, length = num_positions * 4
     """
+    cfg = config_file() if callable(config_file) else config_file
+
     if isinstance(codon_mapper, str):
         with open(codon_mapper) as f:
             codon_mapper_dict = json.load(f)
@@ -761,7 +1049,11 @@ def build_all_raw_feature_rows(
     aa_seq = [codon_mapper_dict.get(genome_seq[i:i + 3], 'X')
               for i in range(0, len(genome_seq), 3)]
 
-    if protein_regions:
+    protein_region_lookup = get_reference_protein_regions(cfg)
+
+    if selected_positions is not None:
+        positions = [idx for idx in selected_positions if 0 <= idx < len(genome_seq)]
+    elif protein_regions:
         positions = []
         for _, (start, end) in protein_regions.items():
             positions.extend(range(start, min(end + 1, len(genome_seq))))
@@ -782,17 +1074,17 @@ def build_all_raw_feature_rows(
         original_aa = aa_seq[aa_idx]
         window = list(padded_seq[idx:idx + k])
         center_nuc = window[mid_point]
-        protein_reg = find_protein_region(idx, protein_regions) if protein_regions else "Non-coding"
+        protein_reg = find_protein_region(idx, protein_region_lookup) if protein_region_lookup else "Non-coding"
 
         for nuc in nucleotides:
             mut_codon = original_codon[:]
             mut_codon[idx % 3] = nuc
             new_aa = codon_mapper_dict.get(''.join(mut_codon), 'X')
 
-            nuc_pam    = config_file['nucleotide sub. matrix'].get(center_nuc, {}).get(nuc, 0)
-            aa_pam     = config_file['AA PAM matrix'].get(original_aa, {}).get(new_aa, 0)
+            nuc_pam    = cfg['nucleotide sub. matrix'].get(center_nuc, {}).get(nuc, 0)
+            aa_pam     = cfg['AA PAM matrix'].get(original_aa, {}).get(new_aa, 0)
             synonymous = int(original_aa == new_aa)
-            aa_feats   = get_aa_features(original_aa, new_aa, config_file)
+            aa_feats   = get_aa_features(original_aa, new_aa, cfg)
 
             all_raw_data.append([
                 *window,
@@ -893,7 +1185,7 @@ def predict_mutations(
 if __name__ == "__main__":
     start_time = time.time()
 
-    cache_path = os.path.join(ROOT_PATH, 'node_features.h5')
+    cache_path = NODE_FEATURES_CACHE_PATH
     os.makedirs(os.path.dirname(cache_path) if os.path.dirname(cache_path) else '.', exist_ok=True)
 
     if not os.path.exists(cache_path):
@@ -907,7 +1199,7 @@ if __name__ == "__main__":
         phylo_tree_path=phylo_tree_path,
         protein_regions={},
         config_file=configs,
-        output_h5_path='features.h5',
+        output_h5_path=REFERENCE_FEATURES_CACHE_PATH,
         k=30
     )
 
@@ -952,88 +1244,340 @@ if __name__ == "__main__":
 
 """
 
-C:/Users/afanu/Projeler/CovMutEx/                                    ← ROOT_PATH
-│
-├── node_features.h5                                                  ← cache_path (2nd assignment - USED)
-├── features.h5                                                       ← output_h5_path (precomputed features)
-├── phylo_features_cache.h5                                          ← CACHE_P_FILE (relative, created in working dir)
-│
-├── genome_extractor/                                                 ← genome_extractor_dir
-    │
-    ├── node_features.h5                                             ← cache_path (1st assignment - CREATED but UNUSED)
-    │
-    ├── covid19_models/
-    │   └── models/
-    │       └── balanced_data_model.keras                            ← model_path
-    │
-    └── genome/                                                       ← base_dir
-        │
-        ├── feature_extractor_updated.py                             ← __file__ (current file)
-        ├── feature_extractor.py
-        ├── configs.py
-        │
-        ├── codon_aa_mapping.json                                    ← codon_mapping_path
-        ├── genome.txt                                               ← genome_txt_path
-        ├── mutations.txt                                            ← mutations_txt_path
-        ├── phylogenetic_tree.nwk                                    ← phylo_tree_path
-        └── depth_date.json                                          ← depth_file
+C:/Users/afanu/Projeler/CovMutEx/                                 <- ROOT_PATH
+|
+`-- genome_extractor/                                             <- genome_extractor_dir
+    |
+    |-- covid19_models/
+    |   `-- models/
+    |       `-- balanced_data_model.keras                         <- model_path
+    |
+    `-- genome/                                                   <- base_dir
+        |
+        |-- feature_extractor_updated.py                          <- current file
+        |-- covmutex_feature_extractors.py
+        |-- build_cache.py
+        |-- configs.py
+        |-- codon_aa_mapping.json                                 <- codon_mapping_path
+        |-- genome.txt                                            <- genome_txt_path
+        |-- mutations.txt                                         <- mutations_txt_path
+        |-- phylogenetic_tree.nwk                                 <- phylo_tree_path
+        |-- depth_date.json                                       <- depth_file
+        `-- cache/
+            |-- features.h5                                       <- REFERENCE_FEATURES_CACHE_PATH
+            |-- node_features.h5                                  <- NODE_FEATURES_CACHE_PATH
+            `-- phylo_features_cache.h5                           <- PHYLO_FEATURES_CACHE_PATH
 
-        
+
 CALL TREE
-─────────────────────────────────────────────────────────────────────────────────
+==============================================================================
 
 External callers
-│
-├── viewsUpdated.py
-│   ├── parse_mutations()
-│   ├── construct_variant_genome()
-│   └── get_sample_depth()
-│
-├── helpers.py
-│   └── predict_mutations()                    ← feu.predict_mutations(...)
-│
-├── views.py
-│   ├── parse_mutations()
-│   ├── construct_variant_genome()
-│   ├── get_sample_depth()
-│   └── cache_precomputed_features()           ← but UNUSED
-│
-└── covmutex_feature_extractors.py
-    └── cache_precomputed_features()
+|
+|-- viewsUpdated.py
+|   |-- parse_mutations()
+|   |-- construct_variant_genome()
+|   |-- add_terminal_padding_nucleotide()
+|   `-- get_sample_depth()
+|
+|-- helpers.py
+|   `-- predict_mutations()                                      <- active runtime path
+|
+|-- covmutex_feature_extractors.py
+|   |-- DefaultCovMutExFeatureExtractor.extract_features()
+|   |   `-- cache_node_atgc_features()                          <- active server-model cache path
+|   `-- load_feature_extractor()
+|
+`-- build_cache.py
+    `-- precompute_default_feature_template_cache()              <- regenerates canonical features.h5
 
-─────────────────────────────────────────────────────────────────────────────────
+------------------------------------------------------------------------------
 
-Internal call tree
-│
-├── predict_mutations()
-│   ├── find_protein_region()
-│   ├── get_aa_features()
-│   ├── preprocess_matrix()
-│   └── load_legacy_keras_model()             ← only if model=None
-│
-├── cache_precomputed_features()
-│   ├── process_variant_raw()
-│   │   ├── get_affected_positions()
-│   │   ├── find_protein_region()
-│   │   └── get_aa_features()
-│   └── preprocess_matrix()
-│
-└── precompute_and_cache_ref_features()       ← only in __main__
-    └── precompute_feature_vectors()
-        ├── get_sequence()
-        ├── translate_nucleotides_to_amino_acids()
-        ├── find_protein_region()
-        └── get_aa_features()
+Active internal call tree
+|
+|-- cache_node_atgc_features()
+|   |-- precompute_default_feature_template_cache()              <- only if features.h5 is missing/incompatible
+|   |-- _node_raw_cache_key()
+|   |-- _node_request_cache_key()
+|   |-- _load_reference_template_raw_rows()
+|   |-- _copy_raw_rows()
+|   |-- _apply_context_to_raw_rows()
+|   |-- get_affected_positions()
+|   |-- _build_variant_rows_for_positions()
+|   |   `-- build_all_raw_feature_rows()
+|   `-- _slice_preprocessed_features_by_regions()
+|
+|-- precompute_default_feature_template_cache()
+|   |-- get_sequence()                                           <- padded reference genome (29904)
+|   |-- build_all_raw_feature_rows()
+|   |   |-- get_reference_protein_regions()
+|   |   |-- find_protein_region()
+|   |   `-- get_aa_features()
+|   `-- preprocess_matrix()
+|
+|-- build_all_raw_feature_rows()
+|   |-- get_reference_protein_regions()
+|   |-- find_protein_region()
+|   `-- get_aa_features()
+|
+`-- predict_mutations()                                          <- legacy standalone inference helper
+    |-- build_all_raw_feature_rows()
+    |-- preprocess_matrix()
+    `-- load_legacy_keras_model()                                <- only if model=None
 
-─────────────────────────────────────────────────────────────────────────────────
+------------------------------------------------------------------------------
 
-Standalone / unused
-│
-├── extract_phylogenetic_features()           ← UNUSED
-│   ├── normalize_features()
-│   └── calculate_phylogenetic_diversity()
-│
-├── balance_dataset()                         ← UNUSED
-└── retrieve_features()                       ← UNUSED
+Legacy / secondary paths
+|
+|-- cache_precomputed_features()                                 <- old node-based cache flow, not used by new server runtime
+|   |-- process_variant_raw()
+|   |   |-- get_affected_positions()
+|   |   |-- find_protein_region()
+|   |   `-- get_aa_features()
+|   `-- preprocess_matrix()
+|
+`-- precompute_and_cache_ref_features()                          <- old reference-cache builder, kept for compatibility inside this module
+    `-- precompute_feature_vectors()
+        |-- get_sequence()
+        |-- translate_nucleotides_to_amino_acids()
+        |-- find_protein_region()
+        `-- get_aa_features()
+
+------------------------------------------------------------------------------
+
+Standalone / currently unused
+|
+|-- extract_phylogenetic_features()
+|   |-- normalize_features()
+|   `-- calculate_phylogenetic_diversity()
+|
+|-- balance_dataset()
+`-- retrieve_features()
+
+
+CACHE CONTENTS
+==============================================================================
+
+features.h5
+|
+|-- Purpose
+|   `-- Canonical reference template cache for the active server-model flow
+|
+|-- Scope
+|   |-- Full padded reference genome (29904)
+|   |-- 4 candidate nucleotides per position (A/T/G/C)
+|   `-- Default context only:
+|       |-- elapsed_day = 0
+|       |-- depth = 0
+|       `-- k = 30
+|
+|-- Datasets
+|   |-- features_raw
+|   |   `-- Raw biological feature rows (~59 fields each) before encoding
+|   `-- features
+|       `-- Preprocessed model-ready matrix with shape (29904 * 4, 205)
+|
+`-- Attrs
+    |-- cache_format = default_atgc_template_v1
+    |-- genome_length = 29904
+    |-- nucleotides_per_position = 4
+    |-- vector_length = 205
+    |-- elapsed_day = 0
+    |-- depth = 0
+    |-- k = 30
+    `-- is_padded_reference = True
+
+------------------------------------------------------------------------------
+
+node_features.h5
+|
+|-- Purpose
+|   `-- Node-based mutation-aware raw + request-feature cache
+|
+|-- Scope
+|   |-- Full padded variant genome for one node
+|   |-- 4 candidate nucleotides per position (A/T/G/C)
+|   |-- Default node context only:
+|   |   |-- elapsed_day = 0
+|   |   |-- depth = 0
+|   |   `-- k = 30
+|   `-- Canonical full-genome raw cache first; region slicing happens after
+|       request-specific preprocessing
+|
+|-- Group layout
+|   `-- <node_raw_cache_key>/
+|       |-- features_raw
+|       |   `-- Raw mutation-aware rows with default elapsed_day/depth
+|       |-- requests/
+|       |   `-- <day_depth_key>/
+|       |       `-- features
+|       |           `-- Preprocessed matrix for one elapsed_day/depth request
+|       `-- attrs
+|           `-- Metadata for the node-specific raw base
+|
+`-- Group attrs
+    |-- cache_format = default_atgc_node_raw_v1
+    |-- node_id
+    |-- default_elapsed_day = 0
+    |-- default_depth = 0
+    |-- k = 30
+    |-- genome_length = 29904
+    |-- nucleotides_per_position = 4
+    `-- variant_genome_md5
+
+Request-group attrs
+    |-- cache_format = default_atgc_node_request_v1
+    |-- elapsed_day
+    |-- depth
+    |-- k = 30
+    |-- genome_length = 29904
+    |-- nucleotides_per_position = 4
+    `-- vector_length = 205
+
+------------------------------------------------------------------------------
+
+EXAMPLE SHAPES AND DATA
+==============================================================================
+
+1) Reference template example in features.h5
+
+Full padded reference genome length:
+    29904
+
+Candidates per position:
+    4  (A, T, G, C)
+
+Preprocessed matrix shape:
+    (29904 * 4, 205) = (119616, 205)
+
+Raw rows dataset length:
+    119616
+
+Conceptual ordering:
+    row 0  -> position 0, candidate A
+    row 1  -> position 0, candidate T
+    row 2  -> position 0, candidate G
+    row 3  -> position 0, candidate C
+    row 4  -> position 1, candidate A
+    row 5  -> position 1, candidate T
+    ...
+
+Mini raw-row example (conceptual, shortened):
+    [
+      ['A','T','G', ... 30-window ..., 'A', 'G', 100, 0.42, 'I', 'V', 0.18,
+       0, 0, 0, 'ORF1ab', ... AA numeric features ...],
+      ['A','T','G', ... 30-window ..., 'A', 'C', 100, 0.31, 'I', 'L', 0.25,
+       0, 0, 0, 'ORF1ab', ... AA numeric features ...]
+    ]
+
+Mini preprocessed example (same rows after encoding, shortened):
+    [
+      [0,1,0,0,0,  1,0,0,0,0,  ...,  0.23,-0.51,1.02, ..., 0.0],
+      [0,1,0,0,0,  0,0,1,0,0,  ..., -0.14, 0.77,0.35, ..., 0.0]
+    ]
+
+Each final row:
+    205 numeric features
+
+------------------------------------------------------------------------------
+
+2) Node-specific example in node_features.h5
+
+Example raw-base cache key:
+    node_ff9fbcf71251_k_30
+
+Meaning:
+    node_id     = EGY/CCHE57357_Wave_3_A029/2021|MZ380261.1|2021-05-11
+    elapsed_day = 0   (stored default raw base)
+    depth       = 0   (stored default raw base)
+    k           = 30
+
+Stored layout:
+    node_features.h5
+    `-- node_ff9fbcf71251_k_30/
+        |-- features_raw -> length 119616
+        `-- requests/
+            `-- day_120__depth_19/
+                `-- features -> shape (119616, 205)
+
+What changed relative to features.h5:
+    - Same overall shape
+    - But rows affected by this node's mutations are rebuilt from the padded
+      variant genome, then merged back into the full reference template
+    - elapsed_day and depth are kept at default 0 in the stored raw base
+    - When a request comes in, elapsed_day/depth are applied to a copy of the
+      raw base, then the resulting preprocessed matrix is stored under the same
+      node group inside requests/
+
+Mini example for one mutated position:
+    Reference position 23403 candidate rows:
+        position 23403 -> A
+        position 23403 -> T
+        position 23403 -> G
+        position 23403 -> C
+
+    Node-specific cache:
+        The same 4 rows exist, but their raw biological context may differ
+        because the node's nearby mutations can change:
+        - the local nucleotide window
+        - the codon
+        - the resulting amino acid
+        - synonymous / non-synonymous flag
+        - substitution scores
+
+------------------------------------------------------------------------------ 
+
+3) Region slicing example after cache load
+
+Example region:
+    ORF10 = [29558, 29674]
+
+Region length:
+    29674 - 29558 + 1 = 117 positions
+
+Rows sent to model after slicing:
+    117 * 4 = 468 rows
+
+Request-specific preprocessed matrix before slice:
+    (119616, 205)
+
+Sliced preprocessed matrix shape:
+    (468, 205)
+
+Model output for a single-input model:
+    (468, 1)
+
+Reshaped position-level predictions:
+    (117, 4)
+
+Meaning:
+    117 genomic positions
+    x
+    4 candidate nucleotide scores per position
+
+------------------------------------------------------------------------------
+
+4) Full-genome prediction example
+
+Input feature matrix after request-specific preprocessing:
+    (119616, 205)
+
+Single-input model raw output:
+    (119616, 1)
+
+Reshaped position-level output:
+    (29904, 4)
+
+User-facing output after dropping internal padding base:
+    (29903, 4)
+
+Frontend genomeData layout:
+    4 x 29903
+
+Meaning:
+    genomeData[0] -> A scores across all real genome positions
+    genomeData[1] -> T scores
+    genomeData[2] -> G scores
+    genomeData[3] -> C scores
 
 """

@@ -14,6 +14,7 @@ import os, json, time, traceback
 import numpy as np
 from django.http import JsonResponse, HttpResponse
 from rest_framework.decorators import api_view
+from .cache_paths import CACHE_DIR, NODE_FEATURES_CACHE_PATH
 from .feature_extractor_updated import parse_mutations
 from .configs import configs
 from .covmutex_models import load_model as load_covmutex_model
@@ -31,7 +32,7 @@ from .benchmark_reports import (export_json, export_csv, export_csv_multi_varian
     export_html, export_html_multi_variant)
 
 codon_mapping_path = os.path.join(os.path.dirname(__file__), 'codon_aa_mapping.json')
-cache_path = os.path.join(os.path.dirname(__file__), 'node_features.h5')
+cache_path = NODE_FEATURES_CACHE_PATH
 UPLOADED_MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploaded_models')
 BENCHMARK_RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'benchmark_results')
 PROTEIN_REGIONS = {
@@ -175,6 +176,7 @@ def _parse_models_list(data):
 @api_view(['POST'])
 def run_benchmark_view(request):
     try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
         data = request.data
         model_ids = _parse_models_list(data)
         node_id = data.get('nodeId')
@@ -292,6 +294,7 @@ def run_benchmark_view(request):
 @api_view(['POST'])
 def run_dataset_benchmark_view(request):
     try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
         data = request.data
         model_ids = data.get('models', [])
         dataset_id = data.get('datasetId')

@@ -16,7 +16,12 @@ from rest_framework.decorators import api_view
 from .configs import configs
 from .covmutex_feature_extractors import load_feature_extractor
 from .covmutex_models import load_model as load_covmutex_model
-from .feature_extractor_updated import construct_variant_genome, get_sample_depth, parse_mutations
+from .feature_extractor_updated import (
+    add_terminal_padding_nucleotide,
+    construct_variant_genome,
+    get_sample_depth,
+    parse_mutations,
+)
 from .helpers import (
     calculate_genome_data,
     calculate_protein_region_probabilities,
@@ -24,6 +29,7 @@ from .helpers import (
     predict_mutations,
     read_genome_sequence,
 )
+from .cache_paths import CACHE_DIR, NODE_FEATURES_CACHE_PATH
 from .plugin_runtime import (
     BundleResolution,
     collect_helper_uploads,
@@ -42,7 +48,7 @@ UPLOADED_MODELS_DIR = os.path.join(GENOME_PROJECT_DIR, "uploaded_models")
 MODEL_DIRECTORY = os.path.join(GENOME_PROJECT_DIR, "covid19_models", "models")
 
 CODON_MAPPING_PATH = os.path.join(BASE_DIR, "codon_aa_mapping.json")
-CACHE_PATH = os.path.join(BASE_DIR, "node_features.h5")
+CACHE_PATH = NODE_FEATURES_CACHE_PATH
 DEPTH_FILE = os.path.join(BASE_DIR, "depth_date.json")
 GENOME_FILE_PATH = os.path.join(BASE_DIR, "genome.txt")
 
@@ -100,6 +106,7 @@ def _list_uploaded_bundle_names() -> list[str]:
 def prepare_prediction_context(request) -> PredictionContext:
     data = _request_data(request)
     files = _request_files(request)
+    os.makedirs(CACHE_DIR, exist_ok=True)
 
     node_id = data.get("nodeId")
     elapsed_day = normalize_elapsed_day(data.get("elapsedDay")) or 0
@@ -195,11 +202,12 @@ def run_prediction(context: PredictionContext, request) -> Dict[str, Any]:
     genome_sequence = read_genome_sequence(GENOME_FILE_PATH)
     mutations = parse_mutations(context.node_id) if context.node_id else []
     variant_genome_sequence = construct_variant_genome(genome_sequence, mutations)
+    padded_variant_genome_sequence = add_terminal_padding_nucleotide(variant_genome_sequence)
     measure_time("genome_processing", genome_start)
 
     prediction_params = {
         "cache_path": CACHE_PATH,
-        "genome_seq": genome_sequence,
+        "genome_seq": padded_variant_genome_sequence,
         "mutations": mutations,
         "codon_mapper": CODON_MAPPING_PATH,
         "config_file": configs(),
@@ -215,6 +223,8 @@ def run_prediction(context: PredictionContext, request) -> Dict[str, Any]:
 
     predictions = predict_mutations(**prediction_params)
     predictions = np.asarray(predictions)
+    if not context.selected_protein_regions and predictions.shape[0] == len(variant_genome_sequence) + 1:
+        predictions = predictions[:len(variant_genome_sequence)]
 
     _write_prediction_artifact(context.bundle, predictions)
 

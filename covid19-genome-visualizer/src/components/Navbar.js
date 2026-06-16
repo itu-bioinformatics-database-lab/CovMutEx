@@ -19,8 +19,6 @@ import DropDown from "./DropDown";
 import {
   updateProteinRegion,
   resetProteinRegion,
-  fetchPrediction,
-  fetchAvailableModels,
 } from "../features/genome/genomeSlice";
 import logo from "../CovMutexLogo-removebg-preview.png";
 
@@ -625,10 +623,8 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
     };
 
     try {
-      await dispatch(fetchPrediction(params)).unwrap();
-
       if (onSubmit) {
-        await onSubmit(_nodeId, _elapsedDay, selectedModel, selectedProteinRegion);
+        await onSubmit(params);
       }
     } catch (error) {
       console.error("Prediction failed:", error);
