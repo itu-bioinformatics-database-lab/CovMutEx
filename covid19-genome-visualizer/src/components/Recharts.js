@@ -31,7 +31,6 @@ Chart.register(
     id: 'highResLoadingOverlay',
     afterDraw: (chart) => {
       if (chart.highResLoading) {
-        if (!chart.ctx || !chart.chartArea) return;
         const { ctx, chartArea: { top, left, width, height } } = chart;
         ctx.save();
         ctx.fillStyle = 'white';
@@ -47,7 +46,6 @@ Chart.register(
   {
     id: 'weblogoOverlay',
     afterDraw: (chart) => {
-      if (!chart.ctx || !chart.chartArea) return;
       const { ctx, chartArea: { top, left, width, height } } = chart;
       if (chart.weblogoLoading) {
         ctx.save();
@@ -77,7 +75,6 @@ Chart.register(
   {
     id: 'chartVisibilityController',
     beforeDraw: (chart) => {
-      if (!chart.ctx || !chart.chartArea) return;
       if (chart.weblogoImage && chart.weblogoMode) {
         const {ctx, chartArea: {top, left, width, height}} = chart;
         if (!chart.clearedForWeblogo) {
@@ -96,7 +93,7 @@ Chart.register(
 );
 
 
-const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, compact = false, externalFocusedProtein }) => {
+const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, scaleType = "logarithmic", compact = false, hideSidebar = false }) => {
   const chartRef = useRef(null);
   const viewRangeToPreserve = useRef(null);
   const isSyncingZoom = useRef(false);
@@ -107,19 +104,12 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, co
   const selectedProteinRegion = useSelector(
     (state) => state.genome.selectedProteinRegion
   );
-
+  
   const [focusedProtein, setFocusedProtein] = useState(null);
 
   useEffect(() => {
     setFocusedProtein(selectedProteinRegion);
   }, [selectedProteinRegion]);
-
-  // Allow external control of focused protein (e.g. from CompareModels)
-  useEffect(() => {
-    if (externalFocusedProtein !== undefined) {
-      setFocusedProtein(externalFocusedProtein);
-    }
-  }, [externalFocusedProtein]);
 
   const [decimateFactor, setDecimateFactor] = useState(25);
   const [zoomLevel, setZoomLevel] = useState(30000);
@@ -248,10 +238,8 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, co
     } catch (error) { console.error("WebLogo generation failed:", error); return null; }
   };
   
-  const isChartAlive = (chart) => chart && chart.canvas && chart.ctx && !chart._destroyed;
-
   const displayWebLogo = async (chart, startPos, endPos) => {
-    if (!isChartAlive(chart)) return;
+    if (!chart || !chart.canvas || !chart.ctx) return;
     if (chart.weblogoTransition) return;
     if (focusedProtein) {
       const [proteinStart, proteinEnd] = proteinRegions[focusedProtein].split('-').map(Number);
@@ -264,36 +252,33 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, co
       setWeblogoLoading(true);
       if (chart.weblogoImage) { URL.revokeObjectURL(chart.weblogoImage.url); chart.weblogoImage = null; }
       chart.weblogoLoading = true;
-      if (isChartAlive(chart)) chart.update();
+      chart.update();
       const imageUrl = await fetchWebLogoImage(startPos, endPos, controller.signal);
-      if (!isChartAlive(chart)) return;
       if (!imageUrl) { chart.weblogoMode = false; chart.weblogoLoading = false; return; }
       const img = new Image();
       await new Promise((resolve, reject) => {
         img.onload = () => {
-          if (!isChartAlive(chart)) { resolve(); return; }
           chart.weblogoImage = { url: imageUrl, img, start: startPos, end: endPos, width: img.width, height: img.height };
           chart.weblogoLoading = false; chart.weblogoMode = true; chart.clearedForWeblogo = false; resolve();
         };
         img.onerror = () => reject(new Error('WebLogo image failed to load'));
         img.src = imageUrl;
       });
-      if (isChartAlive(chart)) chart.update();
+      chart.update();
     } catch (error) {
-      if (error.name !== 'AbortError' && isChartAlive(chart)) {
+      if (error.name !== 'AbortError') {
         if (chart.weblogoImage) { URL.revokeObjectURL(chart.weblogoImage.url); chart.weblogoImage = null; }
-        chart.weblogoMode = false; chart.weblogoLoading = false;
-        if (isChartAlive(chart)) chart.update();
+        chart.weblogoMode = false; chart.weblogoLoading = false; chart.update();
       }
     } finally {
       if (controller) controller.abort();
-      if (chart) chart.weblogoTransition = false;
+      chart.weblogoTransition = false;
       setWeblogoLoading(false);
     }
   };
 
   const updateBarChart = (chart) => {
-    if (!isChartAlive(chart)) return;
+    if (!chart || !chart.canvas || !chart.ctx) return;
     if (chart.weblogoImage) {
       URL.revokeObjectURL(chart.weblogoImage.url);
       chart.weblogoImage = null;
@@ -531,27 +516,29 @@ decimatedLabels.forEach((label, idx) => {
         //   }, 
         //   grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
         // },
-        y: { 
-          stacked: true, 
-          type: 'logarithmic', 
-          min: 0.00001, 
-          max: 1.0,
+        y: {
+          stacked: true,
+          type: scaleType,
+          min: scaleType === 'logarithmic' ? 0.00001 : 0,
+          ...(scaleType === 'logarithmic' ? { max: 1.0 } : {}),
           title: {
             display: true,
-            text: 'Mutation Probability (Log Scale)',
+            text: scaleType === 'logarithmic' ? 'Mutation Probability (Log Scale)' : 'Mutation Probability',
             color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
-          }, 
-          ticks: { 
-            callback: (v) => { 
-              if (v===1) return '10⁰'; 
-              if (v===0.1) return '10⁻¹'; 
-              if (v===0.01) return '10⁻²'; 
-              if (v===0.001) return '10⁻³'; 
-              return ''; 
-            }, 
-            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' 
-          }, 
-          grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
+          },
+          ticks: scaleType === 'logarithmic' ? {
+            callback: (v) => {
+              if (v===1) return '10⁰';
+              if (v===0.1) return '10⁻¹';
+              if (v===0.01) return '10⁻²';
+              if (v===0.001) return '10⁻³';
+              return '';
+            },
+            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666'
+          } : {
+            color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666'
+          },
+          grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' }
         },
       },
       plugins: {
@@ -572,7 +559,7 @@ decimatedLabels.forEach((label, idx) => {
         zoom: {
           zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x",
             onZoomComplete: ({ chart }) => {
-                if (!isChartAlive(chart)) return;
+                if (!chart || !chart.canvas || !chart.ctx) return;
                 let startOffset = highResViewRange ? highResViewRange.min : chartViewData.offsetForView;
                 const effectiveDecimate = highResViewRange ? 1 : currentDecimateFactor;
                 const { min: minIndex, max: maxIndex } = chart.scales.x;
@@ -654,8 +641,8 @@ decimatedLabels.forEach((label, idx) => {
     const endTimeFull = performance.now(); // END TOTAL TIMER
     console.log(`[Timer] Total useEffect execution: ${(endTimeFull - startTimeFull).toFixed(2)}ms`);
     
-    return () => { chartInstance._destroyed = true; chartInstance.destroy(); };
-  }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange, normalizedData]);
+    return () => { chartInstance.destroy(); };
+  }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange, normalizedData, scaleType]);
 
   useEffect(() => {
     const chartInstance = chartRef.current?.chartInstance;
@@ -685,8 +672,8 @@ decimatedLabels.forEach((label, idx) => {
 
   return (
     <div className="overflow-x-hidden">
-      <div className={`chart-container w-full flex bg-[#f6f7f9] ${compact ? 'py-1' : 'py-5'}`}>
-        {!compact && (
+      <div className="chart-container w-full flex bg-[#f6f7f9] py-5">
+        {!hideSidebar && (
           <SidePanel
             proteinRegions={proteinRegions}
             onProteinHover={handleProteinHover}
@@ -699,14 +686,14 @@ decimatedLabels.forEach((label, idx) => {
           {(focusedProtein || highResViewRange) && (
             <button
               onClick={handleResetView}
-              className={`absolute ${compact ? 'top-2 left-2' : 'top-8 left-8'} z-20 bg-white hover:bg-gray-100 text-gray-800 font-semibold py-1 px-3 border border-gray-400 rounded-lg shadow-md ${compact ? 'text-xs' : ''}`}
+              className="absolute top-8 left-8 z-20 bg-white hover:bg-gray-100 text-gray-800 font-semibold py-1 px-3 border border-gray-400 rounded-lg shadow-md"
               aria-label="Reset View"
             >
               Reset View
             </button>
           )}
 
-          <div className={`absolute right-0 top-1/2 transform -translate-y-1/2 z-10 ${compact ? 'scale-75' : ''}`}>
+          <div className="absolute right-0 top-1/2 transform -translate-y-1/2 z-10">
             <div className="flex flex-col items-center bg-white rounded-lg shadow-md overflow-hidden">
               <button onClick={handleZoomIn} className="w-8 h-8 flex items-center justify-center bg-white hover:bg-gray-100 border-b border-gray-200" aria-label="Zoom in">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-700" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" /></svg>
@@ -716,19 +703,17 @@ decimatedLabels.forEach((label, idx) => {
               </button>
             </div>
           </div>
-          {!compact && (
-            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 flex items-center space-x-4 z-10">
-              <span className="text-sm text-gray-600">View earlier</span>
-              <button onClick={() => handlePan(-1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              </button>
-              <button onClick={() => handlePan(1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-              </button>
-              <span className="text-sm text-gray-600">View later</span>
-            </div>
-          )}
-          <canvas className={`w-full bg-white ${compact ? 'h-[45vh] mt-1 px-2 py-1 rounded-lg' : 'h-[90vh] max-h-screen mt-6 pl-4 pr-8 py-2 rounded-xl shadow-md'}`} ref={chartRef} />
+          <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 flex items-center space-x-4 z-10">
+            <span className="text-sm text-gray-600">View earlier</span>
+            <button onClick={() => handlePan(-1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <button onClick={() => handlePan(1)} className="bg-white p-2 rounded-full shadow-md hover:bg-gray-100">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+            <span className="text-sm text-gray-600">View later</span>
+          </div>
+          <canvas className={`w-full bg-white pl-4 pr-8 py-2 rounded-xl shadow-md ${compact ? "h-[420px] mt-2" : "h-[90vh] max-h-screen mt-6"}`} ref={chartRef} />
         </div>
       </div>
     </div>

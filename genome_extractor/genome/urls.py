@@ -6,6 +6,7 @@ from .benchmark_views import (
     run_benchmark_view, run_dataset_benchmark_view,
     get_benchmark_results, list_benchmarks,
     benchmark_datasets_view, export_benchmark_view,
+    search_cov_spectrum_variants_view,
 )
 
 urlpatterns = [
@@ -24,6 +25,7 @@ urlpatterns = [
     path('api/benchmark/list/', list_benchmarks, name='benchmark_list'),
     path('api/benchmark/datasets/', benchmark_datasets_view, name='benchmark_datasets'),
     path('api/benchmark/export/', export_benchmark_view, name='benchmark_export'),
+    path('api/benchmark/cov-spectrum/search-variants/', search_cov_spectrum_variants_view, name='benchmark_cov_spectrum_search'),
     
     path('', home, name='home'),
 ]

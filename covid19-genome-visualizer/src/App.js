@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { MdTimeline, MdShowChart } from "react-icons/md";
 import { useDispatch, useSelector } from "react-redux";
 import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import "./App.css";
@@ -32,14 +33,16 @@ function App() {
 
   // --- REDUX SELECTORS ---
   const {
-    genomeDataRaw,
-    dataset: genomeData,
+    genomeDataRaw,                    // [4][N] format for GenomeChart
+    dataset: genomeData,              // [{mutationPoss}] format for BarChart
     genome: genomeSequence,
     proteinMutationProbs: protein_mutation_probs,
     selectedProteinRegion,
     isSelected,
     loading,
   } = useSelector((state) => state.genome);
+
+  const [scaleType, setScaleType] = useState("logarithmic");
 
   // --- INITIAL DATA LOADING ---
   useEffect(() => {
@@ -53,6 +56,7 @@ function App() {
     }
   }, [location.pathname, dispatch]);
 
+  // Sayfa yenilemeyi önleme (Veri varken)
   useEffect(() => {
     const preventRefresh = (e) => {
       if (isSelected || (genomeData && genomeData.length > 0)) {
@@ -89,82 +93,112 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-950 transition-colors duration-300">
+    <div className="overflow-y-hidden min-h-screen flex flex-col">
       <Nav />
+      
+      <Routes>
+        {/* ANA SAYFA (Input Formu) */}
+        <Route
+          exact
+          path="/"
+          element={
+            <Navbar 
+              onNodeSelect={() => {}} 
+              onSubmit={handleNavbarSubmit} 
+              isLoading={loading}
+            />
+          }
+        />
 
-      <main className="flex-1">
-        <Routes>
-          {/* ANA SAYFA */}
-          <Route
-            exact
-            path="/"
-            element={
-              <Navbar
-                onNodeSelect={() => {}}
-                onSubmit={handleNavbarSubmit}
-                isLoading={loading}
-              />
-            }
-          />
+        {/* HATA SAYFASI */}
+        <Route path="/error" element={<Error />} />
 
-          {/* HATA SAYFASI */}
-          <Route path="/error" element={<Error />} />
+        {/* YENİ UPLOAD SAYFASI */}
+        <Route path="/upload-model" element={<UploadModel />} />
 
-          {/* UPLOAD SAYFASI */}
-          <Route path="/upload-model" element={<UploadModel />} />
+        {/* BENCHMARK / COMPARISON SAYFASI */}
+        <Route path="/benchmark" element={<BenchmarkDashboard />} />
 
-          {/* BENCHMARK */}
-          <Route path="/benchmark" element={<BenchmarkDashboard />} />
+        {/* VISUALIZATION SAYFASI */}
+        <Route path="/compare" element={<CompareModels />} />
 
-          {/* VISUAL COMPARE */}
-          <Route path="/compare" element={<CompareModels />} />
-
-          {/* SONUC GORSELLESTIRME */}
-          <Route
-            exact
-            path="/genome-mutation-visualization"
-            element={
-              <div className="bg-[#f6f7f9] dark:bg-gray-900 relative min-h-screen transition-colors">
-                <h1 className="text-center pt-4 pb-0 font-bold text-xl text-gray-800 dark:text-gray-200">
-                  Genome Sequence Mutation Visualization
-                </h1>
-                <div className="absolute top-0 flex justify-center items-center">
+        {/* SONUÇ GÖRSELLEŞTİRME SAYFASI */}
+        <Route
+          exact
+          path="/genome-mutation-visualization"
+          element={
+            <div className="bg-[#f6f7f9] relative">
+              {/* HEADER */}
+              <div className="flex items-center justify-between px-8 pt-4 pb-0">
+                <div className="flex items-center gap-3">
                   <img
                     src={logo}
-                    className="w-[7rem] h-auto ml-[5.5rem]"
+                    className="w-[5rem] h-auto"
                     alt="CovMutEx Logo"
                   />
+                  <h1 className="font-bold text-xl text-gray-800">
+                    Genome Sequence Mutation Visualization
+                  </h1>
                 </div>
-
-                {loading && (
-                  <div className="absolute inset-0 bg-white/80 dark:bg-gray-900/80 z-50 flex items-center justify-center backdrop-blur-sm">
-                    <div className="text-xl font-semibold text-blue-600 dark:text-blue-400 animate-pulse">
-                      Calculating Predictions...
-                    </div>
-                  </div>
-                )}
-
-                <div className="block md:flex md:justify-normal">
-                  {genomeDataRaw && genomeDataRaw.length > 0 && (
-                    <GenomeChart
-                      genomeData={genomeDataRaw}
-                      genomeSequence={genomeSequence}
-                    />
-                  )}
-
-                  {!selectedProteinRegion && protein_mutation_probs && (
-                    <DoughnutChart data={protein_mutation_probs} />
-                  )}
+                {/* Scale Toggle */}
+                <div className="flex items-center gap-1 bg-white rounded-lg shadow-sm border border-gray-200 p-0.5">
+                  <button
+                    onClick={() => setScaleType("logarithmic")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      scaleType === "logarithmic"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    <MdTimeline size={16} />
+                    Log Scale
+                  </button>
+                  <button
+                    onClick={() => setScaleType("linear")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      scaleType === "linear"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    <MdShowChart size={16} />
+                    Linear Scale
+                  </button>
                 </div>
               </div>
-            }
-          />
 
-          {/* DIGER SAYFALAR */}
-          <Route exact path="/contact-us" element={<Contact />} />
-          <Route exact path="/about" element={<About />} />
-        </Routes>
-      </main>
+              {/* LOADING INDICATOR */}
+              {loading && (
+                <div className="absolute inset-0 bg-white/80 z-50 flex items-center justify-center">
+                  <div className="text-xl font-semibold text-blue-600 animate-pulse">
+                    Calculating Predictions...
+                  </div>
+                </div>
+              )}
+
+              {/* CHARTS */}
+              <div className="block">
+                {genomeDataRaw && genomeDataRaw.length > 0 && (
+                  <GenomeChart
+                    genomeData={genomeDataRaw}
+                    genomeSequence={genomeSequence}
+                    scaleType={scaleType}
+                  />
+                )}
+              </div>
+              {!selectedProteinRegion && protein_mutation_probs && (
+                <div className="flex justify-center py-6">
+                  <DoughnutChart data={protein_mutation_probs} />
+                </div>
+              )}
+            </div>
+          }
+        />
+
+        {/* DİĞER SAYFALAR */}
+        <Route exact path="/contact-us" element={<Contact />} />
+        <Route exact path="/about" element={<About />} />
+      </Routes>
     </div>
   );
 }

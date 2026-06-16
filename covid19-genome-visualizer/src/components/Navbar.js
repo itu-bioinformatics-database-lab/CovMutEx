@@ -67,16 +67,14 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
   const [modelFile, setModelFile] = useState(null);
   const [extractorFile, setExtractorFile] = useState(null);
   const [helperFiles, setHelperFiles] = useState([]);
-  const [paramsList, setParamsList] = useState([
-    { key: "batch_size", value: "32", required: false },
-  ]);
+  const [paramsList, setParamsList] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
   if (!isOpen) return null;
 
   const addParam = () =>
-    setParamsList([...paramsList, { key: "", value: "", required: false }]);
+    setParamsList([...paramsList, { key: "", value: "", required: false, type: "text", options: "" }]);
 
   const removeParam = (index) => {
     const list = [...paramsList];
@@ -105,7 +103,7 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
     setModelFile(null);
     setExtractorFile(null);
     setHelperFiles([]);
-    setParamsList([{ key: "batch_size", value: "32", required: false }]);
+    setParamsList([]);
     setError("");
   };
 
@@ -147,11 +145,16 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
       const customParamsObj = {};
       paramsList.forEach((item) => {
         if (item.key.trim()) {
-          customParamsObj[item.key.trim()] = {
+          const paramEntry = {
             value: isNaN(item.value) ? item.value : parseFloat(item.value),
             required: item.required || false,
             default: item.value,
+            type: item.type || "text",
           };
+          if ((item.type === "radio" || item.type === "dropdown") && item.options) {
+            paramEntry.options = item.options.split(",").map(o => o.trim()).filter(Boolean);
+          }
+          customParamsObj[item.key.trim()] = paramEntry;
         }
       });
       formData.append("customParameters", JSON.stringify(customParamsObj));
@@ -311,103 +314,97 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
               </button>
             </div>
             <div className="p-3 space-y-2">
-              {paramsList.map((item, index) => {
-                const isKnownParam = UPLOAD_PARAM_PRESETS.some(p => p.key === item.key);
-                const presetInfo = UPLOAD_PARAM_PRESETS.find(p => p.key === item.key);
-                return (
-                  <div key={index} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                    <div className="p-3 space-y-2">
-                      {/* Parameter Name */}
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Parameter</label>
-                        <select
-                          value={isKnownParam ? item.key : "__custom__"}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val === "__custom__") {
-                              updateParam(index, "key", "");
-                              updateParam(index, "value", "");
-                            } else {
-                              const p = UPLOAD_PARAM_PRESETS.find(pr => pr.key === val);
-                              updateParam(index, "key", val);
-                              if (p?.defaultValue) updateParam(index, "value", p.defaultValue);
-                            }
-                          }}
-                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all cursor-pointer font-medium"
-                        >
-                          <option value="" disabled>-- Select parameter --</option>
-                          {UPLOAD_PARAM_PRESETS.map(p => (
-                            <option key={p.key} value={p.key}>{p.label}</option>
-                          ))}
-                          <option value="__custom__">Custom...</option>
-                        </select>
-                        {!isKnownParam && (
-                          <input
-                            type="text"
-                            placeholder="Custom parameter name"
-                            value={item.key}
-                            onChange={(e) => updateParam(index, "key", e.target.value)}
-                            className="w-full border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm mt-1.5 focus:border-blue-400"
-                          />
-                        )}
-                      </div>
-                      {/* Value */}
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
-                          Value {presetInfo?.hint && <span className="normal-case font-normal text-gray-300">({presetInfo.hint})</span>}
-                        </label>
-                        {presetInfo?.options ? (
-                          <div className="flex flex-wrap gap-1.5">
-                            {presetInfo.options.map(opt => (
-                              <button
-                                key={opt}
-                                type="button"
-                                onClick={() => updateParam(index, "value", opt)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                                  item.value === opt
-                                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                                    : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
-                                }`}
-                              >
-                                {opt}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <input
-                            type="text"
-                            placeholder={presetInfo?.placeholder || "Value"}
-                            value={item.value}
-                            onChange={(e) => updateParam(index, "value", e.target.value)}
-                            className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                          />
-                        )}
-                      </div>
-                      {/* Required + Delete row */}
-                      <div className="flex items-center justify-between pt-1">
-                        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={item.required}
-                            onChange={(e) => updateParam(index, "required", e.target.checked)}
-                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          Required
-                        </label>
-                        {paramsList.length > 1 && (
+              {paramsList.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-4">
+                  No parameters added. Click "Add" to define model parameters.
+                </p>
+              )}
+              {paramsList.map((item, index) => (
+                <div key={index} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                  <div className="p-3 space-y-2">
+                    {/* Parameter Name */}
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Parameter Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. batch_size, learning_rate..."
+                        value={item.key}
+                        onChange={(e) => updateParam(index, "key", e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                      />
+                    </div>
+                    {/* Default Value */}
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Default Value</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 32, 0.001, adam..."
+                        value={item.value}
+                        onChange={(e) => updateParam(index, "value", e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                      />
+                    </div>
+                    {/* Input Type */}
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Input Type</label>
+                      <div className="flex gap-1.5">
+                        {[
+                          { value: "text", label: "Text" },
+                          { value: "radio", label: "Radio Button" },
+                          { value: "dropdown", label: "Dropdown" },
+                        ].map((opt) => (
                           <button
+                            key={opt.value}
                             type="button"
-                            onClick={() => removeParam(index)}
-                            className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"
+                            onClick={() => updateParam(index, "type", opt.value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                              (item.type || "text") === opt.value
+                                ? "border-blue-500 bg-blue-50 text-blue-700"
+                                : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
+                            }`}
                           >
-                            <MdDelete /> Remove
+                            {opt.label}
                           </button>
-                        )}
+                        ))}
                       </div>
                     </div>
+                    {/* Options (only for radio/dropdown) */}
+                    {(item.type === "radio" || item.type === "dropdown") && (
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                          Options <span className="normal-case font-normal text-gray-300">(comma separated)</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. adam, sgd, rmsprop"
+                          value={item.options || ""}
+                          onChange={(e) => updateParam(index, "options", e.target.value)}
+                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        />
+                      </div>
+                    )}
+                    {/* Required + Delete row */}
+                    <div className="flex items-center justify-between pt-1">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={item.required}
+                          onChange={(e) => updateParam(index, "required", e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Required
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => removeParam(index)}
+                        className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"
+                      >
+                        <MdDelete /> Remove
+                      </button>
+                    </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </div>
 

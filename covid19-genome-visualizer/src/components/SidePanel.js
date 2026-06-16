@@ -39,7 +39,7 @@ const SidePanel = ({
           />
         </div>
 
-        <List className="px-2">
+        <List className="px-2 pb-4">
           {Object.keys(proteinRegions).map((protein) => (
             <ListItem
               key={protein}
@@ -53,7 +53,7 @@ const SidePanel = ({
                 onProteinLeave();
               }}
             >
-              <span className="font-semibold truncate max-w-[50%]">
+              <span className="font-semibold shrink-0">
                 {protein}:
               </span>
               <ListItemSuffix className="ml-4">

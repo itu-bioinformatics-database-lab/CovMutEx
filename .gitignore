@@ -34,3 +34,5 @@ genome_extractor/staticfiles/
 *.mp4
 covid19-genome-visualizer/src/CovMutExVideo.mp4
 *.mp4
+.claude/
+genome_extractor/uploaded_models/
