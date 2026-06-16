@@ -20,7 +20,11 @@ from .configs import configs
 from .covmutex_models import load_model as load_covmutex_model
 from .covmutex_feature_extractors import load_feature_extractor
 from .helpers import predict_mutations, read_genome_sequence
-from .benchmark_engine import run_benchmark, build_ground_truth, compute_total_mutation_probability
+from .benchmark_engine import (
+    run_benchmark, build_ground_truth, compute_total_mutation_probability,
+    build_ground_truth_from_csv, build_ground_truth_from_api_data,
+    fetch_cov_spectrum_mutations, search_cov_spectrum_variants,
+)
 from .benchmark_datasets import (get_available_datasets, get_dataset, save_custom_dataset,
     set_reproducibility_seed, capture_environment, create_reproducibility_pack,
     aggregate_multi_variant_results, DEFAULT_SEED)
@@ -152,20 +156,38 @@ def _save(results, prefix=""):
 def _serialize(results):
     return _clean_nan(results)
 
+def _parse_models_list(data):
+    """Accept models either as a JSON list or as a comma-separated string (multipart forms)."""
+    raw = data.get('models', [])
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        # Try JSON first (frontend may send JSON-encoded string with multipart)
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return parsed
+        except (ValueError, TypeError):
+            pass
+        return [m.strip() for m in raw.split(',') if m.strip()]
+    return []
+
+
 @api_view(['POST'])
 def run_benchmark_view(request):
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         data = request.data
-        model_ids = data.get('models', [])
+        model_ids = _parse_models_list(data)
         node_id = data.get('nodeId')
         elapsed_day = int(data.get('elapsedDay', 60))
-        region = data.get('selectedProteinRegion')
+        region = data.get('selectedProteinRegion') or None
         seed = int(data.get('seed', DEFAULT_SEED))
+        gt_source = (data.get('groundTruthSource') or 'mutations_txt').strip()
         if not model_ids: return JsonResponse({'error': 'At least 1 model required'}, status=400)
         if not node_id: return JsonResponse({'error': 'nodeId required'}, status=400)
         set_reproducibility_seed(seed)
-        print(f"\n{'='*60}\n[BENCHMARK] Single | Seed:{seed} | Models:{model_ids}\n{'='*60}")
+        print(f"\n{'='*60}\n[BENCHMARK] Single | Seed:{seed} | Models:{model_ids} | GT:{gt_source}\n{'='*60}")
         configs_list = []
         for mid in model_ids:
             try:
@@ -177,7 +199,90 @@ def run_benchmark_view(request):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         genome_seq = read_genome_sequence(os.path.join(base_dir, 'genome.txt'))
         mutations = parse_mutations(node_id)
-        results = run_benchmark(configs_list, node_id, elapsed_day, mutations, genome_seq, PROTEIN_REGIONS, run_single_prediction, region)
+
+        # --- Optional custom ground truth (cov-spectrum.org CSV upload or API fetch) ---
+        custom_gt = None
+        custom_gt_full = None
+        gt_meta = {}
+        genome_length = len(genome_seq) if genome_seq else 29904
+        region_tuple = tuple(PROTEIN_REGIONS[region]) if (region and region in PROTEIN_REGIONS) else None
+
+        def _apply_gt(full_result, source_label, extra_meta):
+            """Populate custom_gt / custom_gt_full / gt_meta from a build_ground_truth_* result dict."""
+            nonlocal custom_gt, custom_gt_full, gt_meta
+            custom_gt_full = full_result['ground_truth']
+            if region_tuple is not None:
+                # Slice to region (we built full-genome above; slice here)
+                start, end = region_tuple
+                custom_gt = custom_gt_full[start:end + 1]
+            else:
+                custom_gt = custom_gt_full
+            gt_meta = {
+                'source': source_label,
+                'num_mutations_parsed': full_result['num_mutations_parsed'],
+                'num_mutations_skipped': full_result['num_mutations_skipped'],
+                'skipped_examples': full_result['skipped_examples'],
+                **extra_meta,
+            }
+
+        if gt_source == 'cov_spectrum_csv':
+            csv_file = request.FILES.get('groundTruthCsv') if hasattr(request, 'FILES') else None
+            if not csv_file:
+                return JsonResponse({'error': 'groundTruthCsv file required when groundTruthSource=cov_spectrum_csv'}, status=400)
+            try:
+                csv_content = csv_file.read().decode('utf-8', errors='replace')
+            except Exception as e:
+                return JsonResponse({'error': f'Failed to read CSV: {e}'}, status=400)
+
+            full_result = build_ground_truth_from_csv(csv_content, genome_length=genome_length)
+            _apply_gt(full_result, 'cov_spectrum_csv', {
+                'filename': getattr(csv_file, 'name', 'uploaded.csv'),
+            })
+
+        elif gt_source == 'cov_spectrum_api':
+            # Required: variant (Pango lineage). Dates are optional — empty = all time.
+            lineage = (data.get('covSpectrumLineage') or '').strip() or None
+            date_from = (data.get('covSpectrumDateFrom') or '').strip() or None
+            date_to = (data.get('covSpectrumDateTo') or '').strip() or None
+
+            if not lineage:
+                return JsonResponse({
+                    'error': 'A variant (Pango lineage) is required. Use the search to pick one.'
+                }, status=400)
+
+            try:
+                api_result = fetch_cov_spectrum_mutations(
+                    lineage=lineage, date_from=date_from, date_to=date_to,
+                )
+            except RuntimeError as e:
+                return JsonResponse({'error': f'cov-spectrum API: {e}'}, status=502)
+
+            if not api_result['data']:
+                return JsonResponse({
+                    'error': f'cov-spectrum returned 0 mutations for variant "{lineage}"'
+                             + (f' between {date_from} and {date_to}' if (date_from or date_to) else '')
+                             + '. Try a different variant or widen the date range.',
+                    'query': api_result['query_params'],
+                }, status=404)
+
+            full_result = build_ground_truth_from_api_data(api_result['data'], genome_length=genome_length)
+            _apply_gt(full_result, 'cov_spectrum_api', {
+                'lineage': lineage,
+                'date_from': date_from,
+                'date_to': date_to,
+                'query_params': api_result['query_params'],
+                'api_url': api_result['url'],
+                'num_api_rows': len(api_result['data']),
+            })
+
+        results = run_benchmark(
+            configs_list, node_id, elapsed_day, mutations, genome_seq,
+            PROTEIN_REGIONS, run_single_prediction, region,
+            custom_ground_truth=custom_gt,
+            custom_ground_truth_full=custom_gt_full,
+            ground_truth_source=gt_source,
+            ground_truth_meta=gt_meta,
+        )
         results['reproducibility'] = create_reproducibility_pack(results, seed)
         results['environment'] = capture_environment()
         _save(results)
@@ -234,6 +339,27 @@ def run_dataset_benchmark_view(request):
     except Exception as e:
         print(f"[DS BENCH ERROR] {traceback.format_exc()}")
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+def search_cov_spectrum_variants_view(request):
+    """
+    Proxy to cov-spectrum.org LAPIS — search Pango lineages by substring.
+    Query params:
+        q: search string (empty = top-N most common)
+        limit: max results (default 50)
+    """
+    query = request.GET.get('q', '').strip()
+    try:
+        limit = max(1, min(10000, int(request.GET.get('limit', 50))))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        variants = search_cov_spectrum_variants(query, limit=limit)
+    except RuntimeError as e:
+        return JsonResponse({'error': str(e)}, status=502)
+    return JsonResponse({'variants': variants, 'query': query, 'count': len(variants)}, status=200)
+
 
 @api_view(['GET', 'POST'])
 def benchmark_datasets_view(request):

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MdTimeline, MdShowChart } from "react-icons/md";
 import { useDispatch, useSelector } from "react-redux";
 import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import "./App.css";
@@ -40,6 +41,8 @@ function App() {
     isSelected,
     loading,
   } = useSelector((state) => state.genome);
+
+  const [scaleType, setScaleType] = useState("logarithmic");
 
   // --- INITIAL DATA LOADING ---
   useEffect(() => {
@@ -112,7 +115,7 @@ function App() {
         {/* BENCHMARK / COMPARISON SAYFASI */}
         <Route path="/benchmark" element={<BenchmarkDashboard />} />
 
-        {/* VISUAL COMPARE SAYFASI */}
+        {/* VISUALIZATION SAYFASI */}
         <Route path="/compare" element={<CompareModels />} />
 
         {/* SONUÇ GÖRSELLEŞTİRME SAYFASI */}
@@ -120,17 +123,44 @@ function App() {
           exact
           path="/genome-mutation-visualization"
           element={
-            <div className="bg-[#f6f7f9] relative min-h-screen">
-              {/* HEADER / LOGO */}
-              <h1 className="text-center pt-4 pb-0 font-bold text-xl text-gray-800">
-                Genome Sequence Mutation Visualization
-              </h1>
-              <div className="absolute top-0 flex justify-center items-center">
-                <img
-                  src={logo}
-                  className="w-[7rem] h-auto ml-[5.5rem]"
-                  alt="CovMutEx Logo"
-                />
+            <div className="bg-[#f6f7f9] relative">
+              {/* HEADER */}
+              <div className="flex items-center justify-between px-8 pt-4 pb-0">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={logo}
+                    className="w-[5rem] h-auto"
+                    alt="CovMutEx Logo"
+                  />
+                  <h1 className="font-bold text-xl text-gray-800">
+                    Genome Sequence Mutation Visualization
+                  </h1>
+                </div>
+                {/* Scale Toggle */}
+                <div className="flex items-center gap-1 bg-white rounded-lg shadow-sm border border-gray-200 p-0.5">
+                  <button
+                    onClick={() => setScaleType("logarithmic")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      scaleType === "logarithmic"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    <MdTimeline size={16} />
+                    Log Scale
+                  </button>
+                  <button
+                    onClick={() => setScaleType("linear")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      scaleType === "linear"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    <MdShowChart size={16} />
+                    Linear Scale
+                  </button>
+                </div>
               </div>
 
               {/* LOADING INDICATOR */}
@@ -143,23 +173,20 @@ function App() {
               )}
 
               {/* CHARTS */}
-              <div className="block md:flex md:justify-normal p-4">
-                {/* GenomeChart uses genomeDataRaw which is [4][N] format */}
+              <div className="block">
                 {genomeDataRaw && genomeDataRaw.length > 0 && (
-                  <div className="flex-1" style={{ height: "85vh", maxHeight: "85vh", overflow: "hidden" }}>
-                    <GenomeChart
-                      genomeData={genomeDataRaw}
-                      genomeSequence={genomeSequence}
-                    />
-                  </div>
-                )}
-
-                {!selectedProteinRegion && protein_mutation_probs && (
-                  <div className="md:w-1/3 mt-8 md:mt-0 flex justify-center">
-                    <DoughnutChart data={protein_mutation_probs} />
-                  </div>
+                  <GenomeChart
+                    genomeData={genomeDataRaw}
+                    genomeSequence={genomeSequence}
+                    scaleType={scaleType}
+                  />
                 )}
               </div>
+              {!selectedProteinRegion && protein_mutation_probs && (
+                <div className="flex justify-center py-6">
+                  <DoughnutChart data={protein_mutation_probs} />
+                </div>
+              )}
             </div>
           }
         />

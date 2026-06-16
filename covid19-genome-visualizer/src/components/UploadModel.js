@@ -18,6 +18,82 @@ import {
 const DEFAULT_NODE_ID = "USA/UT-UPHL-210820924226/2021|OK040008.1|2021-08-07";
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
+/** Predefined parameter presets for dropdown selection */
+const PARAM_PRESETS = [
+  {
+    key: "batch_size",
+    label: "Batch Size",
+    type: "number",
+    defaultValue: "32",
+    placeholder: "e.g., 16, 32, 64",
+    options: ["8", "16", "32", "64", "128", "256"],
+    hint: "Number of samples per training batch",
+  },
+  {
+    key: "learning_rate",
+    label: "Learning Rate",
+    type: "number",
+    defaultValue: "0.001",
+    placeholder: "e.g., 0.001",
+    step: "0.0001",
+    min: "0",
+    hint: "Step size for optimizer",
+  },
+  {
+    key: "epochs",
+    label: "Epochs",
+    type: "number",
+    defaultValue: "100",
+    placeholder: "e.g., 50, 100, 200",
+    options: ["10", "25", "50", "100", "200", "500"],
+    hint: "Number of training iterations",
+  },
+  {
+    key: "optimizer",
+    label: "Optimizer",
+    type: "select",
+    defaultValue: "adam",
+    options: ["adam", "sgd", "rmsprop", "adamw", "adagrad"],
+    hint: "Optimization algorithm",
+  },
+  {
+    key: "dropout_rate",
+    label: "Dropout Rate",
+    type: "number",
+    defaultValue: "0.2",
+    placeholder: "0.0 - 1.0",
+    step: "0.05",
+    min: "0",
+    max: "1",
+    hint: "Fraction of neurons to drop during training",
+  },
+  {
+    key: "sequence_length",
+    label: "Sequence Length",
+    type: "number",
+    defaultValue: "29903",
+    placeholder: "e.g., 29903",
+    hint: "Input genome sequence length",
+  },
+  {
+    key: "hidden_units",
+    label: "Hidden Units",
+    type: "number",
+    defaultValue: "128",
+    placeholder: "e.g., 64, 128, 256",
+    options: ["32", "64", "128", "256", "512"],
+    hint: "Number of neurons in hidden layers",
+  },
+  {
+    key: "activation",
+    label: "Activation Function",
+    type: "select",
+    defaultValue: "relu",
+    options: ["relu", "sigmoid", "tanh", "softmax", "leaky_relu", "gelu"],
+    hint: "Non-linear activation function",
+  },
+];
+
 /**
  * UploadModel Component
  * 
@@ -53,6 +129,8 @@ const UploadModel = () => {
 
   // UI state
   const [uploadError, setUploadError] = useState("");
+  // Track which param card has its dropdown open
+  const [openDropdownIndex, setOpenDropdownIndex] = useState(null);
 
   // Fetch available models on mount
   useEffect(() => {
@@ -74,9 +152,17 @@ const UploadModel = () => {
   };
 
   const updateParam = (index, field, value) => {
-    const list = [...customParams];
-    list[index][field] = value;
-    setCustomParams(list);
+    setCustomParams(prev => {
+      const list = prev.map((item, i) => i === index ? { ...item, [field]: value } : item);
+      return list;
+    });
+  };
+
+  const updateParamBoth = (index, key, value) => {
+    setCustomParams(prev => {
+      const list = prev.map((item, i) => i === index ? { ...item, key, value } : item);
+      return list;
+    });
   };
 
   const handleHelperFilesChange = (e) => {
@@ -355,48 +441,193 @@ const UploadModel = () => {
                   )}
                 </div>
 
-                {/* Custom Parameters */}
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <label className="text-sm font-medium text-gray-700">
-                      Custom Parameters
-                    </label>
+                {/* ============================================ */}
+                {/* CUSTOM PARAMETERS - Custom Dropdown UI */}
+                {/* ============================================ */}
+                <div className="bg-white border-2 border-green-200 rounded-2xl overflow-hidden">
+                  {/* Section Header */}
+                  <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-5 py-4 flex justify-between items-center">
+                    <div className="text-white">
+                      <h3 className="font-bold text-base flex items-center gap-2">
+                        <MdSettings className="text-xl" />
+                        Model Hyperparameters
+                      </h3>
+                      <p className="text-green-100 text-xs mt-0.5">Configure training parameters for your model</p>
+                    </div>
                     <button
                       type="button"
                       onClick={addParam}
-                      className="text-sm text-green-600 hover:text-green-800 flex items-center gap-1"
+                      className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors border border-white/30"
                     >
-                      <MdAdd /> Add
+                      <MdAdd className="text-lg" /> Add
                     </button>
                   </div>
-                  <div className="space-y-2">
-                    {customParams.map((item, index) => (
-                      <div key={index} className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Key"
-                          value={item.key}
-                          onChange={(e) => updateParam(index, "key", e.target.value)}
-                          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Value"
-                          value={item.value}
-                          onChange={(e) => updateParam(index, "value", e.target.value)}
-                          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        />
-                        {customParams.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeParam(index)}
-                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                          >
-                            <MdDelete />
-                          </button>
-                        )}
-                      </div>
-                    ))}
+
+                  <div className="p-5 space-y-4">
+                    {customParams.map((item, index) => {
+                      const isPreset = PARAM_PRESETS.some(p => p.key === item.key);
+                      const preset = PARAM_PRESETS.find(p => p.key === item.key);
+                      const isDropdownOpen = openDropdownIndex === index;
+
+                      return (
+                        <div key={index} className="border border-gray-200 rounded-xl bg-gray-50 overflow-hidden">
+                          {/* Card Header */}
+                          <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-full bg-green-100 text-green-700 text-xs font-bold flex items-center justify-center">
+                                {index + 1}
+                              </span>
+                              <span className="text-sm font-medium text-gray-600">
+                                {isPreset ? preset.label : (item.key || "New Parameter")}
+                              </span>
+                              {isPreset && (
+                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                                  Preset
+                                </span>
+                              )}
+                            </div>
+                            {customParams.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeParam(index)}
+                                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded transition-colors"
+                              >
+                                <MdDelete /> Remove
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="p-4 space-y-3">
+                            {/* Parameter Name - Custom Dropdown */}
+                            <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                                Parameter Name
+                              </label>
+                              <div className="relative">
+                                {/* Dropdown Trigger Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenDropdownIndex(isDropdownOpen ? null : index)}
+                                  className={`w-full text-left border-2 rounded-xl px-4 py-3 text-sm font-medium transition-all flex items-center justify-between ${
+                                    isDropdownOpen
+                                      ? "border-green-500 ring-2 ring-green-200 bg-white"
+                                      : "border-gray-200 bg-white hover:border-green-300"
+                                  }`}
+                                >
+                                  <span className={item.key ? "text-gray-800" : "text-gray-400"}>
+                                    {isPreset ? preset.label : (item.key || "Click to select a parameter...")}
+                                  </span>
+                                  <svg className={`w-5 h-5 text-gray-400 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </button>
+
+                                {/* Dropdown Panel */}
+                                {isDropdownOpen && (
+                                  <div className="absolute z-50 mt-1 w-full bg-white border-2 border-green-200 rounded-xl shadow-xl max-h-72 overflow-y-auto">
+                                    {/* Preset Options */}
+                                    <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Common Presets</span>
+                                    </div>
+                                    {PARAM_PRESETS.map(p => (
+                                      <button
+                                        key={p.key}
+                                        type="button"
+                                        onClick={() => {
+                                          updateParamBoth(index, p.key, p.defaultValue || "");
+                                          setOpenDropdownIndex(null);
+                                        }}
+                                        className={`w-full text-left px-4 py-3 hover:bg-green-50 transition-colors border-b border-gray-50 flex items-center justify-between group ${
+                                          item.key === p.key ? "bg-green-50" : ""
+                                        }`}
+                                      >
+                                        <div>
+                                          <div className="text-sm font-semibold text-gray-800 group-hover:text-green-700">
+                                            {p.label}
+                                          </div>
+                                          <div className="text-xs text-gray-400 mt-0.5">{p.hint}</div>
+                                        </div>
+                                        {item.key === p.key && (
+                                          <span className="text-green-600 text-lg">✓</span>
+                                        )}
+                                        {p.defaultValue && item.key !== p.key && (
+                                          <span className="text-xs text-gray-300 bg-gray-100 px-2 py-0.5 rounded">
+                                            default: {p.defaultValue}
+                                          </span>
+                                        )}
+                                      </button>
+                                    ))}
+
+                                    {/* Custom Option */}
+                                    <div className="px-3 py-2 bg-gray-50 border-t border-gray-100">
+                                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Custom</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateParamBoth(index, "", "");
+                                        setOpenDropdownIndex(null);
+                                      }}
+                                      className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors flex items-center gap-2"
+                                    >
+                                      <MdAdd className="text-blue-500" />
+                                      <span className="text-sm font-medium text-blue-600">Write custom parameter name...</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Custom parameter name input - only if not a preset */}
+                              {!isPreset && !isDropdownOpen && item.key !== undefined && (
+                                <input
+                                  type="text"
+                                  placeholder="Type your custom parameter name..."
+                                  value={item.key}
+                                  onChange={(e) => updateParam(index, "key", e.target.value)}
+                                  className="w-full border-2 border-dashed border-gray-300 rounded-xl px-4 py-2.5 text-sm mt-2 focus:border-green-400 focus:ring-2 focus:ring-green-200 transition-all bg-white"
+                                />
+                              )}
+                            </div>
+
+                            {/* Value Input */}
+                            <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                                Value
+                              </label>
+                              {preset?.options ? (
+                                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                                  {preset.options.map(opt => (
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      onClick={() => updateParam(index, "value", opt)}
+                                      className={`px-3 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
+                                        item.value === opt
+                                          ? "border-green-500 bg-green-50 text-green-700 shadow-sm"
+                                          : "border-gray-200 bg-white text-gray-600 hover:border-green-300 hover:bg-green-50/50"
+                                      }`}
+                                    >
+                                      {opt}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <input
+                                  type={preset?.type === "number" ? "number" : "text"}
+                                  placeholder={preset?.placeholder || "Enter value..."}
+                                  value={item.value}
+                                  onChange={(e) => updateParam(index, "value", e.target.value)}
+                                  step={preset?.step}
+                                  min={preset?.min}
+                                  max={preset?.max}
+                                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all bg-white"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

@@ -1,15 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { nodeIds as nodes } from "../data/nodeIds";
 import { modelList as staticModels } from "../data/modelList";
 import { useDispatch, useSelector } from "react-redux";
 import { Button, Input } from "@material-tailwind/react";
 import {
   MdOutlineCreate,
-  MdScience,
-  MdTimeline,
-  MdBiotech,
-  MdWarning,
-  MdCheckCircle,
   MdCloudUpload,
   MdClose,
   MdAdd,
@@ -26,10 +21,6 @@ import {
   resetProteinRegion,
 } from "../features/genome/genomeSlice";
 import logo from "../CovMutexLogo-removebg-preview.png";
-
-// Charts
-import BarChart from "./BarChart";
-import BarChart2 from "./BarChart2";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
@@ -53,35 +44,18 @@ const customStyles = {
 };
 
 // ============================================
-// SUB-COMPONENTS
+// PARAMETER PRESETS (shared between UploadModal and main form)
 // ============================================
-
-const SummaryCard = ({ title, value, subtext, icon: Icon, color }) => (
-  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 transition-transform hover:scale-105">
-    <div className={`p-3 rounded-full ${color} text-white`}>
-      <Icon size={24} />
-    </div>
-    <div>
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-        {title}
-      </p>
-      <h4 className="text-xl font-bold text-gray-800">{value}</h4>
-      {subtext && <p className="text-xs text-gray-400">{subtext}</p>}
-    </div>
-  </div>
-);
-
-const EmptyState = () => (
-  <div className="h-full flex flex-col items-center justify-center text-center p-10 opacity-60">
-    <div className="bg-blue-50 p-6 rounded-full mb-4">
-      <MdBiotech size={64} className="text-blue-300" />
-    </div>
-    <h3 className="text-xl font-bold text-gray-700 mb-2">Ready to Analyze</h3>
-    <p className="text-gray-500 max-w-sm">
-      Select a prediction model, enter parameters, and run prediction to see results.
-    </p>
-  </div>
-);
+const UPLOAD_PARAM_PRESETS = [
+  { key: "batch_size", label: "Batch Size", defaultValue: "32", options: ["8", "16", "32", "64", "128", "256"], hint: "Samples per batch" },
+  { key: "learning_rate", label: "Learning Rate", defaultValue: "0.001", placeholder: "e.g., 0.001", hint: "Optimizer step size" },
+  { key: "epochs", label: "Epochs", defaultValue: "100", options: ["10", "25", "50", "100", "200", "500"], hint: "Training iterations" },
+  { key: "optimizer", label: "Optimizer", defaultValue: "adam", options: ["adam", "sgd", "rmsprop", "adamw", "adagrad"], hint: "Optimization algorithm" },
+  { key: "dropout_rate", label: "Dropout Rate", defaultValue: "0.2", placeholder: "0.0 - 1.0", hint: "Neuron drop fraction" },
+  { key: "sequence_length", label: "Sequence Length", defaultValue: "29903", placeholder: "e.g., 29903", hint: "Genome input length" },
+  { key: "hidden_units", label: "Hidden Units", defaultValue: "128", options: ["32", "64", "128", "256", "512"], hint: "Neurons in hidden layers" },
+  { key: "activation", label: "Activation", defaultValue: "relu", options: ["relu", "sigmoid", "tanh", "softmax", "leaky_relu", "gelu"], hint: "Activation function" },
+];
 
 // ============================================
 // UPLOAD MODAL
@@ -91,16 +65,14 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
   const [modelFile, setModelFile] = useState(null);
   const [extractorFile, setExtractorFile] = useState(null);
   const [helperFiles, setHelperFiles] = useState([]);
-  const [paramsList, setParamsList] = useState([
-    { key: "batch_size", value: "32", required: false },
-  ]);
+  const [paramsList, setParamsList] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
   if (!isOpen) return null;
 
   const addParam = () =>
-    setParamsList([...paramsList, { key: "", value: "", required: false }]);
+    setParamsList([...paramsList, { key: "", value: "", required: false, type: "text", options: "" }]);
 
   const removeParam = (index) => {
     const list = [...paramsList];
@@ -129,7 +101,7 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
     setModelFile(null);
     setExtractorFile(null);
     setHelperFiles([]);
-    setParamsList([{ key: "batch_size", value: "32", required: false }]);
+    setParamsList([]);
     setError("");
   };
 
@@ -171,11 +143,16 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
       const customParamsObj = {};
       paramsList.forEach((item) => {
         if (item.key.trim()) {
-          customParamsObj[item.key.trim()] = {
+          const paramEntry = {
             value: isNaN(item.value) ? item.value : parseFloat(item.value),
             required: item.required || false,
             default: item.value,
+            type: item.type || "text",
           };
+          if ((item.type === "radio" || item.type === "dropdown") && item.options) {
+            paramEntry.options = item.options.split(",").map(o => o.trim()).filter(Boolean);
+          }
+          customParamsObj[item.key.trim()] = paramEntry;
         }
       });
       formData.append("customParameters", JSON.stringify(customParamsObj));
@@ -319,55 +296,111 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             )}
           </div>
 
-          {/* Custom Parameters */}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-xs font-bold text-gray-700 uppercase">
-                Model Parameters
-              </label>
+          {/* Custom Parameters - Dropdown Style */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 flex justify-between items-center">
+              <div className="flex items-center gap-2 text-white">
+                <MdSettings className="text-lg" />
+                <span className="text-sm font-bold">Model Parameters</span>
+              </div>
               <button
                 type="button"
                 onClick={addParam}
-                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                className="flex items-center gap-1 text-xs text-white bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg transition-colors border border-white/30"
               >
-                <MdAdd /> Add Parameter
+                <MdAdd /> Add
               </button>
             </div>
-            <div className="space-y-2">
+            <div className="p-3 space-y-2">
+              {paramsList.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-4">
+                  No parameters added. Click "Add" to define model parameters.
+                </p>
+              )}
               {paramsList.map((item, index) => (
-                <div key={index} className="flex gap-2 items-center bg-gray-50 p-2 rounded-lg">
-                  <input
-                    type="text"
-                    placeholder="Key"
-                    value={item.key}
-                    onChange={(e) => updateParam(index, "key", e.target.value)}
-                    className="flex-1 border rounded px-2 py-1 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Default Value"
-                    value={item.value}
-                    onChange={(e) => updateParam(index, "value", e.target.value)}
-                    className="flex-1 border rounded px-2 py-1 text-sm"
-                  />
-                  <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={item.required}
-                      onChange={(e) => updateParam(index, "required", e.target.checked)}
-                      className="rounded"
-                    />
-                    Required
-                  </label>
-                  {paramsList.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeParam(index)}
-                      className="text-red-500 hover:text-red-700 p-1"
-                    >
-                      <MdDelete />
-                    </button>
-                  )}
+                <div key={index} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                  <div className="p-3 space-y-2">
+                    {/* Parameter Name */}
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Parameter Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. batch_size, learning_rate..."
+                        value={item.key}
+                        onChange={(e) => updateParam(index, "key", e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                      />
+                    </div>
+                    {/* Default Value */}
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Default Value</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 32, 0.001, adam..."
+                        value={item.value}
+                        onChange={(e) => updateParam(index, "value", e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                      />
+                    </div>
+                    {/* Input Type */}
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">Input Type</label>
+                      <div className="flex gap-1.5">
+                        {[
+                          { value: "text", label: "Text" },
+                          { value: "radio", label: "Radio Button" },
+                          { value: "dropdown", label: "Dropdown" },
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => updateParam(index, "type", opt.value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                              (item.type || "text") === opt.value
+                                ? "border-blue-500 bg-blue-50 text-blue-700"
+                                : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Options (only for radio/dropdown) */}
+                    {(item.type === "radio" || item.type === "dropdown") && (
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                          Options <span className="normal-case font-normal text-gray-300">(comma separated)</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. adam, sgd, rmsprop"
+                          value={item.options || ""}
+                          onChange={(e) => updateParam(index, "options", e.target.value)}
+                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        />
+                      </div>
+                    )}
+                    {/* Required + Delete row */}
+                    <div className="flex items-center justify-between pt-1">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={item.required}
+                          onChange={(e) => updateParam(index, "required", e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Required
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => removeParam(index)}
+                        className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"
+                      >
+                        <MdDelete /> Remove
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -396,10 +429,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
   // Redux state
   const {
-    dataset: reduxDataset,
-    genome: reduxGenome,
     selectedProteinRegion,
-    availableModels,
     loading: reduxLoading,
   } = useSelector((state) => state.genome);
 
@@ -603,80 +633,62 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   };
 
   // ============================================
-  // COMPUTED VALUES
-  // ============================================
-
-  const genomeData = reduxDataset;
-  const genomeSequence = reduxGenome;
-
-  const stats = useMemo(() => {
-    if (!genomeData || genomeData.length === 0) return null;
-
-    let totalConfidence = 0;
-    let maxRisk = 0;
-
-    genomeData.forEach((item) => {
-      if (item.mutationPoss) {
-        const values = Object.values(item.mutationPoss);
-        const max = Math.max(...values);
-        totalConfidence += max;
-        const risk = 1 - max;
-        if (risk > maxRisk) maxRisk = risk;
-      }
-    });
-
-    return {
-      length: genomeData.length.toLocaleString(),
-      confidence: (totalConfidence / genomeData.length).toFixed(3),
-      maxRisk: maxRisk.toFixed(3),
-    };
-  }, [genomeData]);
-
-  // ============================================
   // RENDER
   // ============================================
-  if (loading && !genomeData) {
+  if (loading) {
     return <LoadingSpinner />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col p-6 gap-6">
-      {/* Header */}
-      <header className="flex items-center justify-between bg-white px-8 py-4 rounded-2xl shadow-sm border border-gray-100">
-        <div className="flex items-center gap-4">
-          <img src={logo} alt="Logo" className="h-12 w-auto object-contain" />
-          <div className="hidden md:block w-px h-10 bg-gray-200"></div>
-          <h1 className="hidden md:block text-xl font-bold text-blue-900 tracking-tight">
-            CovMutEx - Mutation Explorer
-          </h1>
-        </div>
-      </header>
+    <div className="min-h-[calc(100vh-3.5rem)] p-4 flex flex-col justify-center items-center bg-gradient-to-br from-gray-50 via-blue-50/30 to-gray-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-colors">
+      {/* Centered Logo */}
+      <div className="flex justify-center items-center w-full">
+        <img
+          src={logo}
+          alt="CovMutEx Logo"
+          className="w-[18rem] h-[9rem] sm:w-64 sm:h-[9rem] md:w-80 md:h-[10rem] lg:w-[22rem] lg:h-[14rem] xl:w-[32rem] xl:h-[20rem] object-contain drop-shadow-sm"
+        />
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* ============================================ */}
-        {/* FORM PANEL (Left Side) */}
-        {/* ============================================ */}
-        <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6 z-10">
-          <div className="mb-6 pb-4 border-b border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <MdScience className="text-blue-600" /> Analysis Parameters
-            </h2>
-            <p className="text-xs text-gray-400 mt-1">
-              Configure settings or upload a new model.
-            </p>
+      {/* Form Card */}
+      <div className="w-full max-w-xl">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl dark:shadow-gray-900/50 border border-gray-200 dark:border-gray-800 p-6 animate-fade-in">
+          {/* Step Indicator */}
+          <div className="flex items-center justify-center gap-0 mb-6">
+            {[
+              { num: 1, label: "Select Model" },
+              { num: 2, label: "Configure" },
+              { num: 3, label: "Run" },
+            ].map((step, idx) => (
+              <div key={step.num} className="flex items-center">
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                    (step.num === 1 && selectedModel) || (step.num === 2 && _nodeId) || step.num === 3
+                      ? "bg-blue-600 text-white dark:bg-blue-500"
+                      : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+                  }`}>
+                    {step.num}
+                  </div>
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium">{step.label}</span>
+                </div>
+                {idx < 2 && (
+                  <div className="w-16 h-px bg-gray-200 dark:bg-gray-700 mx-2 mb-4" />
+                )}
+              </div>
+            ))}
           </div>
 
-          <form className="space-y-5" onSubmit={handleSubmit}>
+          <form className="space-y-4" onSubmit={handleSubmit}>
             {/* Model Selection */}
             <div>
               <div className="flex justify-between items-center mb-1">
-                <label className="text-xs font-bold text-gray-500 uppercase block ml-1">
+                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase block ml-1">
                   Prediction Model *
                 </label>
                 <button
                   type="button"
                   onClick={() => setIsUploadModalOpen(true)}
-                  className="text-xs text-blue-600 font-bold hover:text-blue-800 flex items-center gap-1 bg-blue-50 px-2 py-1 rounded transition-colors"
+                  className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded-lg transition-colors"
                 >
                   <MdCloudUpload /> Upload New
                 </button>
@@ -702,7 +714,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
             {/* Variant ID */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Variant ID *
               </label>
               <DropDown items={nodes} setNodeId={setNodeId} />
@@ -710,7 +722,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
             {/* Elapsed Days */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Elapsed Days *
               </label>
               <Input
@@ -720,16 +732,16 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 min={1}
                 placeholder="e.g., 60"
                 required
-                className="!border !border-gray-300 focus:!border-blue-500"
+                className="!border !border-gray-300 dark:!border-gray-600 focus:!border-blue-500 dark:!bg-gray-800 dark:!text-gray-200"
               />
-              <p className="text-xs text-gray-400 mt-1 ml-1">
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 ml-1">
                 Days since variant emergence (affects mutation probability)
               </p>
             </div>
 
             {/* Region */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Protein Region
               </label>
               <Select
@@ -742,7 +754,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 ]}
                 onChange={handleProteinRegionChange}
                 styles={customStyles}
-                placeholder="Optional"
+                placeholder="Optional — defaults to whole genome"
                 isClearable
               />
             </div>
@@ -756,47 +768,74 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
             )}
 
             {!parametersLoading && modelParameters.length > 0 && (
-              <div className="mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100">
-                <div className="flex items-center gap-2 mb-3">
-                  <MdSettings className="text-blue-500" />
-                  <label className="text-xs font-bold text-blue-800 uppercase">
-                    Model Parameters
-                  </label>
-                  <MdInfo className="text-blue-400" title="Parameters specific to this model" />
+              <div className="mt-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 overflow-hidden">
+                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 flex items-center gap-2">
+                  <MdSettings className="text-white text-lg" />
+                  <span className="text-sm font-bold text-white">Model Parameters</span>
+                  <MdInfo className="text-blue-200" title="Parameters specific to this model" />
                 </div>
-                <div className="space-y-3">
-                  {modelParameters.map((item, index) => (
-                    <div
-                      key={index}
-                      className={`bg-white p-3 rounded-lg border ${
-                        item.required ? "border-orange-200" : "border-gray-200"
-                      } shadow-sm`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-gray-700 uppercase">
-                          {item.key}
-                          {item.required && (
-                            <span className="text-red-500 ml-1">*</span>
-                          )}
-                        </span>
-                        {item.default !== undefined && (
-                          <span className="text-xs text-gray-400">
-                            Default: {item.default}
-                          </span>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        className={`w-full text-sm font-medium text-gray-800 border rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                          item.required && !item.value ? "border-red-300 bg-red-50" : "border-gray-200"
+                <div className="p-3 space-y-2">
+                  {modelParameters.map((item, index) => {
+                    const presetInfo = UPLOAD_PARAM_PRESETS.find(p => p.key === item.key);
+                    return (
+                      <div
+                        key={index}
+                        className={`bg-white rounded-xl border shadow-sm overflow-hidden ${
+                          item.required ? "border-orange-200" : "border-gray-200"
                         }`}
-                        value={item.value}
-                        onChange={(e) => updateModelParam(index, e.target.value)}
-                        placeholder={item.required ? "Required" : "Optional"}
-                        required={item.required}
-                      />
-                    </div>
-                  ))}
+                      >
+                        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-gray-700 uppercase">
+                              {presetInfo?.label || item.key}
+                            </span>
+                            {item.required && (
+                              <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold">Required</span>
+                            )}
+                          </div>
+                          {item.default !== undefined && (
+                            <span className="text-xs text-gray-400">
+                              Default: {item.default}
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-3">
+                          {presetInfo?.options ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {presetInfo.options.map(opt => (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  onClick={() => updateModelParam(index, opt)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                                    item.value === opt
+                                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                                      : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
+                                  }`}
+                                >
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <input
+                              type="text"
+                              className={`w-full text-sm font-medium text-gray-800 border-2 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all ${
+                                item.required && !item.value ? "border-red-300 bg-red-50" : "border-gray-200"
+                              }`}
+                              value={item.value}
+                              onChange={(e) => updateModelParam(index, e.target.value)}
+                              placeholder={item.required ? "Required" : "Optional"}
+                              required={item.required}
+                            />
+                          )}
+                          {presetInfo?.hint && (
+                            <p className="text-xs text-blue-500 mt-1.5">{presetInfo.hint}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -806,22 +845,13 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               size="lg"
               color="blue"
               type="submit"
-              className="w-full flex justify-center items-center gap-2 shadow-blue-500/20 hover:shadow-blue-500/40 mt-4"
+              className="w-full flex justify-center items-center gap-2 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40 mt-6 rounded-xl"
               disabled={loading}
             >
               {loading ? "Processing..." : "Run Prediction"}
               <MdOutlineCreate className="text-lg" />
             </Button>
           </form>
-        </div>
-
-        {/* ============================================ */}
-        {/* RESULTS PANEL - Removed, results shown on /genome-mutation-visualization */}
-        {/* ============================================ */}
-        <div className="lg:col-span-8 space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-[500px] flex items-center justify-center">
-            <EmptyState />
-          </div>
         </div>
       </div>
 
