@@ -4,7 +4,7 @@ import Chart from "chart.js/auto";
 import annotationPlugin from "chartjs-plugin-annotation";
 import zoomPlugin from "chartjs-plugin-zoom";
 import { nucleotides } from "../helpers/helperFunctions";
-import { proteinRegions } from "../data/proteinRegions";
+import { proteinRegions as defaultProteinRegions } from "../data/proteinRegions";
 import {
   proteinRegionColorMap,
   proteinRegionColorMapAnnotations,
@@ -93,7 +93,26 @@ Chart.register(
 );
 
 
-const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, scaleType = "logarithmic", compact = false, hideSidebar = false }) => {
+// Visual constants for the single-channel (binary / scalar) mode. We pick a
+// neutral indigo so it's clearly distinct from the categorical ATGC palette
+// but still works on the same white background.
+const SINGLE_CHANNEL_COLOR = "rgba(99, 102, 241, 0.85)";   // indigo-500
+const SINGLE_CHANNEL_LABELS = {
+  binary: "Mutation likelihood",
+  scalar: "Per-position score",
+};
+
+const GenomeChart = ({
+  genomeData,
+  genomeSequence,
+  onZoomSync,
+  syncZoomRange,
+  scaleType = "logarithmic",
+  compact = false,
+  hideSidebar = false,
+  mode = "categorical",     // "categorical" | "binary" | "scalar"
+}) => {
+  const isCategorical = mode === "categorical";
   const chartRef = useRef(null);
   const viewRangeToPreserve = useRef(null);
   const isSyncingZoom = useRef(false);
@@ -104,7 +123,27 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, sc
   const selectedProteinRegion = useSelector(
     (state) => state.genome.selectedProteinRegion
   );
-  
+
+  // Organism-aware protein regions — backend now ships them via
+  // `proteinRegionPossibilities` (covid by default, influenza/custom when
+  // the bundle targets them). We convert the [start, end] array form the
+  // backend uses to the "start-end" string form the rest of this Chart.js
+  // code reads. Falls back to the hardcoded COVID dict when Redux is empty
+  // (first load before any prediction has landed).
+  const organismRegionPossibilities = useSelector(
+    (state) => state.genome.proteinRegionPossibilities
+  );
+  const proteinRegions = useMemo(() => {
+    if (organismRegionPossibilities && Object.keys(organismRegionPossibilities).length > 0) {
+      return Object.fromEntries(
+        Object.entries(organismRegionPossibilities).map(([name, range]) =>
+          Array.isArray(range) ? [name, `${range[0]}-${range[1]}`] : [name, range]
+        )
+      );
+    }
+    return defaultProteinRegions;
+  }, [organismRegionPossibilities]);
+
   const [focusedProtein, setFocusedProtein] = useState(null);
 
   useEffect(() => {
@@ -143,14 +182,21 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, sc
 
   const normalizedData = useMemo(() => {
     if (!genomeData || !genomeData.length) return [];
-    
+
+    // Binary / scalar payloads already arrive as probabilities or scores —
+    // no per-position rescaling needed. Pass through as-is so the y-axis
+    // shows the raw value.
+    if (!isCategorical) {
+      return genomeData;
+    }
+
     return nucleotides.map((_, nucIdx) =>
       genomeData[nucIdx].map((count, pos) => {
         const total = nucleotides.reduce((sum, _, i) => sum + (genomeData[i]?.[pos] || 0), 0);
         return total > 0 ? count / total : 0;
       })
     );
-  }, [genomeData]);
+  }, [genomeData, isCategorical]);
 
   const chartViewData = useMemo(() => {
     if (focusedProtein && proteinRegions[focusedProtein] && normalizedData?.length) {
@@ -170,13 +216,26 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, sc
       const startOffset = chartViewData.offsetForView;
       return (genomePosition - startOffset) / currentDecimateFactor;
     };
+    const FALLBACK_BG = "rgba(99, 102, 241, 0.15)";
+    const FALLBACK_BORDER = "rgba(99, 102, 241, 0.6)";
+    const annotationBox = (key, start, end) => ({
+      display: true,
+      type: "box",
+      xMin: mapPos(start),
+      xMax: mapPos(end),
+      backgroundColor: proteinRegionColorMapAnnotations[key] ?? FALLBACK_BG,
+      borderColor: proteinRegionColorMap[key] ?? FALLBACK_BORDER,
+      borderWidth: 2,
+      label: { content: key, enabled: true, position: "start" },
+      z: 10,
+    });
     if (activeProtein) {
       const [start, end] = proteinRegions[activeProtein].split("-").map(Number);
-      return [{ display: true, type: "box", xMin: mapPos(start), xMax: mapPos(end), yMin: 0, yMax: 3, backgroundColor: proteinRegionColorMapAnnotations[activeProtein], borderColor: proteinRegionColorMap[activeProtein], borderWidth: 2, label: { content: activeProtein, enabled: true, position: "start" }, z: 10 }];
+      return [annotationBox(activeProtein, start, end)];
     } else if (showFullAnnotation) {
       return Object.keys(proteinRegions).map((key) => {
         const [start, end] = proteinRegions[key].split("-").map(Number);
-        return { display: true, type: "box", xMin: mapPos(start), xMax: mapPos(end), yMin: 0, yMax: 3, backgroundColor: proteinRegionColorMapAnnotations[key], borderColor: proteinRegionColorMap[key], borderWidth: 2, label: { content: key, enabled: true, position: "start" }, z: 10 };
+        return annotationBox(key, start, end);
       });
     }
     return [];
@@ -316,7 +375,10 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, sc
       }, 500);
       return;
     }
-    if ((highResViewRange || decimateFactor === 1) && newRangeInBasePairs <= WEBLOGO_THRESHOLD) {
+    // Weblogo (per-position ATGC letter stack) only makes sense when the
+    // values are categorical nucleotide probabilities. Binary / scalar modes
+    // emit one number per position with no letter — skip the threshold.
+    if (isCategorical && (highResViewRange || decimateFactor === 1) && newRangeInBasePairs <= WEBLOGO_THRESHOLD) {
       const centerGenomePos = Math.round((minGenomePos + maxGenomePos) / 2);
       const [minBound, maxBound] = focusedProtein ? proteinRegions[focusedProtein].split('-').map(Number) : [1, 30000];
       let startPos = Math.max(minBound, centerGenomePos - 12);
@@ -453,6 +515,28 @@ const GenomeChart = ({ genomeData, genomeSequence, onZoomSync, syncZoomRange, sc
         return `${position}-${nucleotide}`;
     });
 const mutationDetails = [];
+if (!isCategorical) {
+  // Single-channel mode (binary / scalar): one value per decimated segment.
+  // We aggregate the chunk by averaging across positions so visual density
+  // matches the categorical path; max-pool would also be defensible here.
+  decimatedLabels.forEach((label, idx) => {
+    const segmentStartPos = dataStartPosition + (idx * dataEffectiveDecimateFactor);
+    const segmentEndPos = segmentStartPos + dataEffectiveDecimateFactor;
+    let sum = 0;
+    let validPositions = 0;
+    for (let absolutePos = segmentStartPos; absolutePos < segmentEndPos; absolutePos++) {
+      if (absolutePos < 0 || absolutePos >= (genomeData[0]?.length || 0)) continue;
+      sum += genomeData[0]?.[absolutePos] || 0;
+      validPositions++;
+    }
+    const value = validPositions > 0 ? sum / validPositions : 0;
+    mutationDetails.push({
+      absolutePosition: segmentStartPos,
+      value,
+      total: value,
+    });
+  });
+} else {
 decimatedLabels.forEach((label, idx) => {
   const segmentStartPos = dataStartPosition + (idx * dataEffectiveDecimateFactor);
   const segmentEndPos = Math.min(30000, segmentStartPos + dataEffectiveDecimateFactor);
@@ -480,50 +564,55 @@ decimatedLabels.forEach((label, idx) => {
     .filter(nuc => nuc !== refNucleotide)
     .reduce((sum, nuc) => sum + mutationProbs[nuc], 0);
 
-  mutationDetails.push({ 
-    absolutePosition: segmentStartPos, 
-    refNuc: refNucleotide, 
-    mutations: { ...mutationProbs }, 
-    total: totalMutProb 
+  mutationDetails.push({
+    absolutePosition: segmentStartPos,
+    refNuc: refNucleotide,
+    mutations: { ...mutationProbs },
+    total: totalMutProb
   });
 });
-    
-    const mutationDatasets = [];
-    nucleotides.forEach(targetNuc => {
-      const data = mutationDetails.map((detail) => (detail.refNuc === targetNuc || detail.total === 0) ? 0 : detail.mutations[targetNuc] || 0);
-      mutationDatasets.push({ label: `${targetNuc} `, data, stack: 'mutation', maxBarThickness: 50, backgroundColor: (ctx) => ctx.chart.weblogoMode ? 'rgba(0,0,0,0)' : nucleotideColors[targetNuc], borderColor: (ctx) => ctx.chart.weblogoMode ? 'rgba(0,0,0,0)' : nucleotideColors[targetNuc] });
-    });
-    const filteredDatasets = mutationDatasets.filter(ds => ds.data.some(v => v > 0));
+}
+
+    let filteredDatasets;
+    if (isCategorical) {
+      const mutationDatasets = [];
+      nucleotides.forEach(targetNuc => {
+        const data = mutationDetails.map((detail) => (detail.refNuc === targetNuc || detail.total === 0) ? 0 : detail.mutations[targetNuc] || 0);
+        mutationDatasets.push({ label: `${targetNuc} `, data, stack: 'mutation', maxBarThickness: 50, backgroundColor: (ctx) => ctx.chart.weblogoMode ? 'rgba(0,0,0,0)' : nucleotideColors[targetNuc], borderColor: (ctx) => ctx.chart.weblogoMode ? 'rgba(0,0,0,0)' : nucleotideColors[targetNuc] });
+      });
+      filteredDatasets = mutationDatasets.filter(ds => ds.data.some(v => v > 0));
+    } else {
+      // Single dataset, one bar per (decimated) position. No stacking — we
+      // want a flat bar chart against the same x-axis chrome.
+      filteredDatasets = [{
+        label: SINGLE_CHANNEL_LABELS[mode] || "Value",
+        data: mutationDetails.map((d) => d.value || 0),
+        maxBarThickness: 50,
+        backgroundColor: (ctx) => ctx.chart.weblogoMode ? 'rgba(0,0,0,0)' : SINGLE_CHANNEL_COLOR,
+        borderColor: (ctx) => ctx.chart.weblogoMode ? 'rgba(0,0,0,0)' : SINGLE_CHANNEL_COLOR,
+      }];
+    }
     const data = { labels: decimatedLabels, datasets: filteredDatasets };
 
+
+    // Single-channel modes draw one bar per position — no stacking. Pick a
+    // y-axis title that matches what the model is actually emitting.
+    const yAxisTitleBase = isCategorical
+      ? 'Mutation Probability'
+      : (SINGLE_CHANNEL_LABELS[mode] || 'Value');
 
     const options = {
       animation: false, responsive: true, maintainAspectRatio: false,
       scales: {
-        x: { stacked: true, grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' }, ticks: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' } },
-        // y: { 
-        //   stacked: true, 
-        //   type: 'linear', 
-        //   min: 0, 
-        //   max: 1.0,
-        //   title: {
-        //     display: true,
-        //     text: 'Mutation Probability',
-        //     color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
-        //   }, 
-        //   ticks: { 
-        //     color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' 
-        //   }, 
-        //   grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' } 
-        // },
+        x: { stacked: isCategorical, grid: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.1)' }, ticks: { color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#666' } },
         y: {
-          stacked: true,
+          stacked: isCategorical,
           type: scaleType,
           min: scaleType === 'logarithmic' ? 0.00001 : 0,
           ...(scaleType === 'logarithmic' ? { max: 1.0 } : {}),
           title: {
             display: true,
-            text: scaleType === 'logarithmic' ? 'Mutation Probability (Log Scale)' : 'Mutation Probability',
+            text: scaleType === 'logarithmic' ? `${yAxisTitleBase} (Log Scale)` : yAxisTitleBase,
             color: (c) => c.chart.weblogoMode ? 'rgba(0,0,0,0)' : '#333'
           },
           ticks: scaleType === 'logarithmic' ? {
@@ -545,13 +634,25 @@ decimatedLabels.forEach((label, idx) => {
         tooltip: {
           enabled: (c) => !c.chart.weblogoMode,
           callbacks: {
-            title: (items) => `Position ${items[0].label.split("-")[0]} (Ref: ${items[0].label.split("-")[1]})`,
-            label: () => null, 
+            title: (items) => {
+              const [pos, ref] = items[0].label.split("-");
+              return isCategorical && ref
+                ? `Position ${pos} (Ref: ${ref})`
+                : `Position ${pos}`;
+            },
+            label: () => null,
             afterBody: (items) => {
               const detail = chartRef.current.chartInstance.mutationDetails?.[items[0].dataIndex];
               if (!detail) return [];
+              if (!isCategorical) {
+                // Single-channel mode: just show the aggregated value.
+                const value = (detail.value ?? detail.total ?? 0);
+                const label = SINGLE_CHANNEL_LABELS[mode] || "Value";
+                return [`${label}: ${Number(value).toFixed(4)}`];
+              }
+              if (!detail.mutations || !detail.refNuc) return [];
               const mutations = ['A','T','G','C'].filter(n => n !== detail.refNuc && detail.mutations[n] > 0.0001).map(n => `${detail.refNuc} → ${n}: ${detail.mutations[n].toFixed(4)}`);
-              return [...mutations, `Total: ${detail.total.toFixed(4)}`];
+              return [...mutations, `Total: ${(detail.total || 0).toFixed(4)}`];
             }
           }, displayColors: false
         },
@@ -591,7 +692,7 @@ decimatedLabels.forEach((label, idx) => {
                     setHighResViewRange(null); setDecimateFactor(25);
                     return;
                 }
-                if (newZoomLevel <= WEBLOGO_THRESHOLD && !chart.weblogoMode) {
+                if (isCategorical && newZoomLevel <= WEBLOGO_THRESHOLD && !chart.weblogoMode) {
                     const centerPos = (minGenomePos + maxGenomePos) / 2;
                     const [minB, maxB] = focusedProtein ? proteinRegions[focusedProtein].split('-').map(Number) : [1, 30000];
                     let startPos = Math.max(minB, Math.round(centerPos) - 12);
@@ -642,7 +743,7 @@ decimatedLabels.forEach((label, idx) => {
     console.log(`[Timer] Total useEffect execution: ${(endTimeFull - startTimeFull).toFixed(2)}ms`);
     
     return () => { chartInstance.destroy(); };
-  }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange, normalizedData, scaleType]);
+  }, [chartViewData, genomeData, genomeSequence, decimateFactor, highResViewRange, normalizedData, scaleType, mode, isCategorical]);
 
   useEffect(() => {
     const chartInstance = chartRef.current?.chartInstance;

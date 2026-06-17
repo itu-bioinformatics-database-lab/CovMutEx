@@ -127,6 +127,13 @@ const UploadModel = () => {
     { key: "batch_size", value: "32" },
   ]);
 
+  // Organism targeting — drives how the backend resolves the reference genome
+  // and protein_regions for this bundle. "custom" means the bundle ships its
+  // own genome + (optionally) protein-region CSV as helper files.
+  const [organism, setOrganism] = useState("covid");
+  const [genomeFile, setGenomeFile] = useState("");
+  const [proteinRegionsFile, setProteinRegionsFile] = useState("");
+
   // UI state
   const [uploadError, setUploadError] = useState("");
   // Track which param card has its dropdown open
@@ -202,11 +209,25 @@ const UploadModel = () => {
         return;
       }
 
+      // Custom organism requires a genome helper file reference.
+      if (organism === "custom" && !genomeFile.trim()) {
+        setUploadError(
+          'For a custom organism, enter the Genome File name (a helper file you upload below, e.g. "my_genome.fasta").'
+        );
+        return;
+      }
+
       params.isNewUpload = true;
       params.uploadName = uploadName.trim();
       params.modelFile = modelFile;
       params.extractorFile = extractorFile;
       params.helperFiles = helperFiles;
+      params.organism = organism;
+      params.genomeFile = genomeFile.trim();
+      params.proteinRegionsFile = proteinRegionsFile.trim();
+      // No variant at upload time anymore — the user picks the strain on
+      // the prediction screen, so a single influenza bundle can be re-run
+      // against any of the 9 cataloged HA strains.
     }
 
     try {
@@ -221,6 +242,11 @@ const UploadModel = () => {
         formData.append("modelFile", params.modelFile);
         formData.append("nodeId", params.nodeId);
         formData.append("elapsedDay", String(params.elapsedDay));
+        // Organism dispatch — written into bundle_metadata.json server-side.
+        formData.append("organism", params.organism);
+        if (params.genomeFile) formData.append("genome_file", params.genomeFile);
+        if (params.proteinRegionsFile)
+          formData.append("protein_regions_file", params.proteinRegionsFile);
         if (params.extractorFile) formData.append("extractorFile", params.extractorFile);
         if (params.helperFiles) {
           params.helperFiles.forEach((file, i) => {
@@ -367,6 +393,66 @@ const UploadModel = () => {
                     placeholder="e.g., MyCustomModel_v1"
                     required={activeTab === "upload"}
                   />
+                </div>
+
+                {/* Organism selector */}
+                <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Target Organism
+                    </label>
+                    <select
+                      value={organism}
+                      onChange={(e) => setOrganism(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    >
+                      <option value="covid">SARS-CoV-2 (built-in)</option>
+                      <option value="influenza">Influenza A — HA Segment (built-in)</option>
+                      <option value="custom">Other — I'll upload my own genome</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Built-in organisms use our reference genome &amp; protein regions.
+                      Choose <span className="font-medium">Other</span> to predict on a virus we don't ship.
+                      For Influenza A you'll pick the specific HA strain (PR/8/34, Cal/07,
+                      cattle/Texas, etc.) on the prediction screen — not here.
+                    </p>
+                  </div>
+
+                  {/* Custom-organism helper-file references */}
+                  {organism === "custom" && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Genome File Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={genomeFile}
+                          onChange={(e) => setGenomeFile(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="my_genome.fasta"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Protein Regions File — Optional
+                        </label>
+                        <input
+                          type="text"
+                          value={proteinRegionsFile}
+                          onChange={(e) => setProteinRegionsFile(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="my_protein_regions.csv"
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 md:col-span-2">
+                        Upload these as <span className="font-medium">Helper Files</span> below. The
+                        names here must match the uploaded file names exactly. Protein-regions CSV
+                        format: <span className="font-mono">name,start,end</span> (1-based inclusive),
+                        one protein per line.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* File Uploads */}

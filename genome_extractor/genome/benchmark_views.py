@@ -18,8 +18,20 @@ from .cache_paths import CACHE_DIR, NODE_FEATURES_CACHE_PATH
 from .feature_extractor_updated import parse_mutations
 from .configs import configs
 from .covmutex_models import load_model as load_covmutex_model
+from .covmutex_adapters import load_model_adapter
 from .covmutex_feature_extractors import load_feature_extractor
 from .helpers import predict_mutations, read_genome_sequence
+from .plugin_runtime import (
+    BundleResolution,
+    resolve_uploaded_bundle,
+    resolve_server_model,
+)
+from .organism_registry import (
+    read_builtin_organism,
+    read_custom_organism_from_bundle,
+    find_variant_subtype,
+    read_variant,
+)
 from .benchmark_engine import (
     run_benchmark, build_ground_truth, compute_total_mutation_probability,
     build_ground_truth_from_csv, build_ground_truth_from_api_data,
@@ -42,73 +54,98 @@ PROTEIN_REGIONS = {
     "N": [28274, 29533], "ORF10": [29558, 29674],
 }
 
-def resolve_model_path(model_identifier):
-    """Resolve model identifier to path, name, source, extractor_path, and custom_parameters."""
+def _resolve_bundle(model_identifier: str, request_custom_parameters: dict = None) -> BundleResolution:
+    """Resolve model identifier to a BundleResolution via plugin_runtime."""
     if model_identifier.startswith('uploaded:'):
-        folder_name = model_identifier.replace('uploaded:', '')
-        folder_path = os.path.join(UPLOADED_MODELS_DIR, folder_name)
-        if not os.path.exists(folder_path):
-            raise FileNotFoundError(f"Uploaded model folder not found: {folder_name}")
-        model_path = None
-        for f in os.listdir(folder_path):
-            if f.startswith('model.') and f.endswith(('.keras', '.h5', '.pt', '.pth')):
-                model_path = os.path.join(folder_path, f)
-                break
-        if not model_path:
-            for f in os.listdir(folder_path):
-                if f.endswith(('.keras', '.h5', '.pt', '.pth')):
-                    model_path = os.path.join(folder_path, f)
-                    break
-        if not model_path:
-            raise FileNotFoundError(f"No model file in: {folder_name}")
-        
-        # Check for custom extractor
-        extractor_path = os.path.join(folder_path, 'feature_extractor.py')
-        if not os.path.exists(extractor_path):
-            extractor_path = None
-        
-        # Load custom parameters
-        params = {}
-        params_file = os.path.join(folder_path, 'custom_parameters.json')
-        if os.path.exists(params_file):
-            with open(params_file, 'r') as f:
-                raw = json.load(f)
-                for k, v in raw.items():
-                    params[k] = v['value'] if isinstance(v, dict) and 'value' in v else v
-        
-        return {
-            'path': model_path, 'name': folder_name, 'source': 'uploaded',
-            'custom_parameters': params, 'extractor_path': extractor_path,
-        }
-    else:
-        model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'covid19_models', 'models')
-        model_path = os.path.join(model_dir, f"{model_identifier}.keras")
-        if not os.path.exists(model_path):
-            for ext in ['.h5', '.pt', '.pth']:
-                alt = os.path.join(model_dir, f"{model_identifier}{ext}")
-                if os.path.exists(alt):
-                    model_path = alt
-                    break
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Server model not found: {model_identifier}")
-        return {
-            'path': model_path, 'name': model_identifier, 'source': 'server',
-            'custom_parameters': {}, 'extractor_path': None,
-        }
+        return resolve_uploaded_bundle(UPLOADED_MODELS_DIR, model_identifier, request_custom_parameters or {})
+    model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'covid19_models', 'models')
+    return resolve_server_model(model_dir, model_identifier)
+
+
+def _bundle_to_config(bundle: BundleResolution) -> dict:
+    """Convert a BundleResolution to the flat dict format consumed by run_benchmark."""
+    return {
+        'model_path': bundle.model_path,
+        'name': bundle.bundle_name or bundle.model_name,
+        'source': bundle.source,
+        'custom_parameters': bundle.custom_parameters,
+        'extractor_path': bundle.extractor_path,
+        'adapter_path': bundle.adapter_path,
+        'bundle_dir': bundle.bundle_dir,
+        'organism': bundle.organism,
+        'genome_file': bundle.genome_file,
+        'protein_regions_file': bundle.protein_regions_file,
+        'variant': bundle.variant,
+    }
+
+
+def _resolve_benchmark_genome(configs_list: list) -> tuple:
+    """Return (genome_seq, protein_regions) for the benchmark run.
+
+    Uses the first uploaded bundle's organism declaration. Falls back to the
+    built-in COVID genome when all models are server-side or organism='covid'.
+    Influenza bundles without a variant use the H1N1 reference by default.
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    covid_genome = lambda: read_genome_sequence(os.path.join(base_dir, 'genome.txt'))
+
+    uploaded = next((c for c in configs_list if c.get('source') == 'uploaded'), None)
+    if uploaded is None:
+        return covid_genome(), PROTEIN_REGIONS
+
+    organism = uploaded.get('organism', 'covid')
+    bundle_dir = uploaded.get('bundle_dir') or ''
+    variant = uploaded.get('variant')
+
+    if organism == 'custom':
+        try:
+            return read_custom_organism_from_bundle(
+                bundle_dir,
+                uploaded.get('genome_file') or '',
+                uploaded.get('protein_regions_file'),
+            )
+        except Exception as exc:
+            print(f"[BENCHMARK] custom organism load failed ({exc}), falling back to COVID")
+            return covid_genome(), PROTEIN_REGIONS
+
+    if organism in ('influenza', 'influenza_h1n1', 'influenza_h3n2', 'influenza_h5n1'):
+        subtype = organism if organism != 'influenza' else 'influenza_h1n1'
+        if variant:
+            subtype_from_variant = find_variant_subtype(variant)
+            if subtype_from_variant:
+                subtype = subtype_from_variant
+                try:
+                    genome_seq, protein_regions = read_builtin_organism(subtype)
+                    variant_seq = read_variant(subtype, variant)
+                    return variant_seq, protein_regions
+                except Exception:
+                    pass
+        try:
+            return read_builtin_organism(subtype)
+        except Exception as exc:
+            print(f"[BENCHMARK] influenza organism load failed ({exc}), falling back to COVID")
+            return covid_genome(), PROTEIN_REGIONS
+
+    return covid_genome(), PROTEIN_REGIONS
 
 def run_single_prediction(model_path, model_name, source, node_id, elapsed_day,
     mutations, genome_sequence, protein_regions, selected_protein_region=None,
-    custom_parameters=None, extractor_path=None):
-    """Run prediction using the plugin architecture — uses uploaded extractor when available."""
-    model_wrapper = load_covmutex_model(model_path=model_path, model_name=model_name, source=source)
-    
+    custom_parameters=None, extractor_path=None, adapter_path=None, base_dir=None):
+    """Run prediction using the plugin architecture — honours model_adapter.py when present."""
+    # Use model adapter when the bundle ships one; fall back to default Keras wrapper.
+    if adapter_path and os.path.exists(adapter_path):
+        print(f"[BENCHMARK] Using model adapter: {adapter_path}")
+        model_wrapper = load_model_adapter(adapter_path, model_path, model_name=model_name, source=source)
+    else:
+        model_wrapper = load_covmutex_model(model_path=model_path, model_name=model_name, source=source)
+
     # Use uploaded extractor if available, otherwise default
     if extractor_path and os.path.exists(extractor_path):
         print(f"[BENCHMARK] Using uploaded extractor: {extractor_path}")
         extractor = load_feature_extractor(extractor_type='uploaded', module_path=extractor_path)
     else:
         extractor = load_feature_extractor(extractor_type='default')
-    
+
     pr_dict = {}
     if selected_protein_region and selected_protein_region in protein_regions:
         pr_dict = {selected_protein_region: protein_regions[selected_protein_region]}
@@ -120,7 +157,10 @@ def run_single_prediction(model_path, model_name, source, node_id, elapsed_day,
     }
     if custom_parameters:
         params.update(custom_parameters)
-    return predict_mutations(**params)
+    payload = predict_mutations(**params)
+    # predict_mutations returns a PredictionPayload dict (v2.0). Extract the
+    # raw values array so benchmark_engine can compute scalar mutation probs.
+    return np.asarray(payload["predictions"]["values"])
 
 def _clean_nan(obj):
     """Recursively replace NaN/Inf with None for JSON compatibility."""
@@ -191,13 +231,10 @@ def run_benchmark_view(request):
         configs_list = []
         for mid in model_ids:
             try:
-                c = resolve_model_path(mid)
-                c['model_path'] = c.pop('path')
-                configs_list.append(c)
-            except FileNotFoundError as e:
+                configs_list.append(_bundle_to_config(_resolve_bundle(mid)))
+            except FileNotFoundError:
                 return JsonResponse({'error': f"Model not found: {mid}"}, status=404)
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        genome_seq = read_genome_sequence(os.path.join(base_dir, 'genome.txt'))
+        genome_seq, protein_regions_map = _resolve_benchmark_genome(configs_list)
         mutations = parse_mutations(node_id)
 
         # --- Optional custom ground truth (cov-spectrum.org CSV upload or API fetch) ---
@@ -205,7 +242,7 @@ def run_benchmark_view(request):
         custom_gt_full = None
         gt_meta = {}
         genome_length = len(genome_seq) if genome_seq else 29904
-        region_tuple = tuple(PROTEIN_REGIONS[region]) if (region and region in PROTEIN_REGIONS) else None
+        region_tuple = tuple(protein_regions_map[region]) if (region and region in protein_regions_map) else None
 
         def _apply_gt(full_result, source_label, extra_meta):
             """Populate custom_gt / custom_gt_full / gt_meta from a build_ground_truth_* result dict."""
@@ -277,7 +314,7 @@ def run_benchmark_view(request):
 
         results = run_benchmark(
             configs_list, node_id, elapsed_day, mutations, genome_seq,
-            PROTEIN_REGIONS, run_single_prediction, region,
+            protein_regions_map, run_single_prediction, region,
             custom_ground_truth=custom_gt,
             custom_ground_truth_full=custom_gt_full,
             ground_truth_source=gt_source,
@@ -312,18 +349,15 @@ def run_dataset_benchmark_view(request):
         configs_list = []
         for mid in model_ids:
             try:
-                c = resolve_model_path(mid)
-                c['model_path'] = c.pop('path')
-                configs_list.append(c)
-            except FileNotFoundError as e:
+                configs_list.append(_bundle_to_config(_resolve_bundle(mid)))
+            except FileNotFoundError:
                 return JsonResponse({'error': f"Model not found: {mid}"}, status=404)
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        genome_seq = read_genome_sequence(os.path.join(base_dir, 'genome.txt'))
+        genome_seq, protein_regions_map = _resolve_benchmark_genome(configs_list)
         per_variant = []
         for i, v in enumerate(variants):
             print(f"\n[DS BENCH] Variant {i+1}/{len(variants)}: {v.get('label','')}")
             mutations = parse_mutations(v['nodeId'])
-            vr = run_benchmark(configs_list, v['nodeId'], v['elapsedDay'], mutations, genome_seq, PROTEIN_REGIONS, run_single_prediction, region)
+            vr = run_benchmark(configs_list, v['nodeId'], v['elapsedDay'], mutations, genome_seq, protein_regions_map, run_single_prediction, region)
             vr['variant_label'] = v.get('label', f"Variant {i+1}")
             per_variant.append(vr)
         aggregated = aggregate_multi_variant_results(per_variant)

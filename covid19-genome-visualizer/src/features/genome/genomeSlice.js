@@ -1,5 +1,4 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import { proteinRegions } from "../../data/proteinRegions";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
@@ -70,6 +69,7 @@ export const fetchPrediction = createAsyncThunk(
         extractorFile,
         helperFiles,
         customParameters,
+        variant,
       } = params;
 
       let response;
@@ -122,15 +122,20 @@ export const fetchPrediction = createAsyncThunk(
           selectedProteinRegion: selectedProteinRegion || null,
         };
 
+        // Prediction-time variant override for influenza bundles. Backend
+        // routes it via _resolve_organism_data → find_variant_subtype, so the
+        // payload's HA region annotation matches the chosen strain's subtype.
+        if (variant) {
+          payload.variant = variant;
+        }
+
         if (customParameters && Object.keys(customParameters).length > 0) {
           payload.customParameters = JSON.stringify(customParameters);
         }
 
         response = await fetch(`${API_URL}/api/predict/`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       }
@@ -170,21 +175,22 @@ function transformBackendResponse(data, selectedProteinRegion) {
     proteinRegionPossibilities,
     model_metadata,
     extractor_metadata,
+    predictionPayload,
     nodeId,
     elapsedDay,
     selectedModel,
   } = data;
 
   // === FORMAT 1: Raw [4][N] array (for GenomeChart / Recharts) ===
-  // Backend already sends this format — keep it as-is
+  // Backend sends this only for categorical_per_position payloads.
   const genomeDataRaw = genomeData;
 
   // === FORMAT 2: Transformed object array (for BarChart / BarChart2) ===
   let dataset = [];
-  
+
   if (genomeData && Array.isArray(genomeData) && genomeData.length === 4) {
     const numPositions = genomeData[0].length;
-    
+
     for (let i = 0; i < numPositions; i++) {
       const nucleotide = genomeSequence ? genomeSequence[i] : "";
       dataset.push({
@@ -201,13 +207,17 @@ function transformBackendResponse(data, selectedProteinRegion) {
   }
 
   return {
-    genomeDataRaw,          // [4][N] for GenomeChart
+    genomeDataRaw,          // [4][N] for GenomeChart (categorical only)
     dataset,                // [{pos, nucleotide, mutationPoss}] for BarChart/BarChart2
     genome: genomeSequence || "",
     proteinMutationProbs: protein_mutation_probs || {},
     proteinRegionPossibilities: proteinRegionPossibilities || {},
     modelMetadata: model_metadata || {},
     extractorMetadata: extractor_metadata || {},
+    // Self-describing v2.0 PredictionPayload (see backend PLUGIN_CONTRACT.md).
+    // Drives the payload-router so binary / scalar / non-COVID models render
+    // without the response having to fit the legacy ATGC shape.
+    predictionPayload: predictionPayload || null,
     selectedProteinRegion: selectedProteinRegion || null,
     nodeId,
     elapsedDay,
@@ -220,12 +230,16 @@ function transformBackendResponse(data, selectedProteinRegion) {
 // ============================================
 
 const initialState = {
-  // Data - TWO formats for different chart components
-  genomeDataRaw: [],    // [4][N] format for GenomeChart (Recharts.js)
+  // Data - TWO legacy formats for different chart components
+  genomeDataRaw: [],    // [4][N] format for GenomeChart (Recharts.js) — categorical only
   dataset: [],          // [{pos, nucleotide, mutationPoss}] for BarChart/BarChart2
   genome: "",
   proteinMutationProbs: {},
   proteinRegionPossibilities: {},
+
+  // v2.0 self-describing PredictionPayload (drives the payload-router).
+  // null until the first prediction lands or for legacy responses without it.
+  predictionPayload: null,
   
   // Model info
   modelMetadata: {},
@@ -286,12 +300,15 @@ export const genomeSlice = createSlice({
     },
 
     showProteinRegion: (state, action) => {
-      const region = proteinRegions[action.payload];
+      // Organism-aware: look up the region in the current organism's table
+      // (set by the most recent prediction). For built-in COVID, this is the
+      // same set as the legacy hardcoded import was.
+      const region = state.proteinRegionPossibilities?.[action.payload];
       if (!region) {
         console.error(`Protein region "${action.payload}" not found.`);
         return;
       }
-      
+
       state.chartTitle = action.payload;
       state.isWholeSequenceSelected = false;
       state.selectedProteinRegion = action.payload;
@@ -354,13 +371,14 @@ export const genomeSlice = createSlice({
       })
       .addCase(fetchPrediction.fulfilled, (state, action) => {
         state.loading = false;
-        state.genomeDataRaw = action.payload.genomeDataRaw;  // [4][N] for GenomeChart
+        state.genomeDataRaw = action.payload.genomeDataRaw;  // [4][N] for GenomeChart (categorical only)
         state.dataset = action.payload.dataset;               // [{mutationPoss}] for BarChart
         state.genome = action.payload.genome;
         state.proteinMutationProbs = action.payload.proteinMutationProbs;
         state.proteinRegionPossibilities = action.payload.proteinRegionPossibilities;
         state.modelMetadata = action.payload.modelMetadata;
         state.extractorMetadata = action.payload.extractorMetadata;
+        state.predictionPayload = action.payload.predictionPayload;
         state.selectedProteinRegion = action.payload.selectedProteinRegion;
         state.isSelected = true;
         state.showDoughnut = action.payload.selectedProteinRegion === null;

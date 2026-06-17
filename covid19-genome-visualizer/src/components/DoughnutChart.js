@@ -1,17 +1,42 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Doughnut } from "react-chartjs-2";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { showProteinRegion } from "../features/genome/genomeSlice";
 import { proteinRegionColorMap } from "../utils/proteinRegionColorMap";
-import { proteinRegionsSize } from "../data/proteinRegions";
+import { proteinRegionsSize as defaultProteinRegionsSize } from "../data/proteinRegions";
 import { Switch } from "@material-tailwind/react";
 
 const DoughnutChart = ({ data = {} }) => {
+  // All hooks must be called unconditionally and in the same order on every
+  // render. Any early return (e.g. the "no data" guard below) MUST come AFTER
+  // every hook call here, per the React rules-of-hooks.
   const [normalized, setNormalized] = useState(false);
   const [title, setTitle] = useState("Mutation Probability");
   const dispatch = useDispatch();
 
-  // Don't render if no data
+  // Organism-aware protein region lengths. proteinRegionPossibilities is
+  // {name: [start, end]} (1-based inclusive) coming from the backend's
+  // organism layer; length = end - start + 1. Falls back to the hardcoded
+  // COVID sizes when no prediction has landed yet.
+  const organismRegionPossibilities = useSelector(
+    (state) => state.genome.proteinRegionPossibilities
+  );
+  const proteinRegionsSize = useMemo(() => {
+    if (
+      organismRegionPossibilities &&
+      Object.keys(organismRegionPossibilities).length > 0
+    ) {
+      return Object.fromEntries(
+        Object.entries(organismRegionPossibilities).map(([name, range]) => [
+          name,
+          Array.isArray(range) ? range[1] - range[0] + 1 : 1,
+        ])
+      );
+    }
+    return defaultProteinRegionsSize;
+  }, [organismRegionPossibilities]);
+
+  // Don't render if no data — early return must come AFTER all hooks above.
   if (!data || Object.keys(data).length === 0) {
     return null;
   }
@@ -58,8 +83,8 @@ const DoughnutChart = ({ data = {} }) => {
     responsive: true,
     maintainAspectRatio: true,
     plugins: {
-      legend: { position: "top" },
-      title: { display: true, text: title },
+      legend: { position: "top", labels: { boxWidth: 12, padding: 8, font: { size: 11 } } },
+      title: { display: false },
     },
     onClick: (event, elements) => {
       if (elements[0]) {

@@ -8,6 +8,90 @@ import { proteinRegionColorMap } from "../utils/proteinRegionColorMap";
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 const GENOME_LENGTH = 29903;
 
+// ============================================
+// SCALAR / BINARY LINE CHART
+// Fallback for non-categorical payloads (binary_per_position, scalar_per_position).
+// ============================================
+const ScalarLineChart = ({ payload, color }) => {
+  const chartRef = useRef(null);
+  const chartInst = useRef(null);
+
+  useEffect(() => {
+    if (!chartRef.current || !payload) return;
+    if (chartInst.current) chartInst.current.destroy();
+
+    const values = payload.predictions?.values;
+    if (!Array.isArray(values) || values.length === 0) return;
+
+    const region = payload.domain?.region;
+    const offset = region?.start ?? 0;
+    const totalLength = payload.domain?.total_length ?? GENOME_LENGTH;
+
+    // Flatten in case values are nested (e.g. [[0.1], [0.2]])
+    const flat = values.map((v) => (Array.isArray(v) ? Math.max(...v) : v));
+
+    // Downsample to ~500 points for rendering performance
+    const step = Math.max(1, Math.floor(flat.length / 500));
+    const data = [];
+    for (let i = 0; i < flat.length; i += step) {
+      data.push({ x: offset + i, y: flat[i] });
+    }
+
+    const taskKind = payload.task?.kind ?? "score";
+    const label = taskKind === "binary_per_position" ? "Mutation probability"
+                : taskKind === "scalar_per_position" ? "Score"
+                : taskKind;
+
+    chartInst.current = new Chart(chartRef.current, {
+      type: "scatter",
+      data: {
+        datasets: [{
+          label,
+          data,
+          borderColor: color,
+          backgroundColor: "transparent",
+          borderWidth: 1.5,
+          pointRadius: 0,
+          showLine: true,
+          tension: 0.1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        scales: {
+          x: {
+            title: { display: true, text: "Genome Position", font: { size: 11 } },
+            min: 0,
+            max: totalLength,
+            ticks: { font: { size: 10 } },
+          },
+          y: {
+            title: { display: true, text: label, font: { size: 11 } },
+            min: 0,
+            max: 1,
+            ticks: { font: { size: 10 } },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => `Position: ${Math.round(items[0]?.parsed?.x ?? 0)}`,
+              label: (ctx) => `${label}: ${ctx.parsed.y.toFixed(4)}`,
+            },
+          },
+        },
+      },
+    });
+
+    return () => { if (chartInst.current) chartInst.current.destroy(); };
+  }, [payload, color]);
+
+  return <canvas ref={chartRef} />;
+};
+
 const MODEL_COLORS = [
   { border: "#2563EB", bg: "rgba(37, 99, 235, 0.15)", label: "#1D4ED8", line: "rgba(37, 99, 235, 0.8)" },
   { border: "#DC2626", bg: "rgba(220, 38, 38, 0.15)", label: "#B91C1C", line: "rgba(220, 38, 38, 0.8)" },
@@ -428,6 +512,7 @@ const CompareModels = ({
             ...p,
             [displayName]: {
               genomeDataRaw,
+              predictionPayload: data.predictionPayload || null,
               genomeSequence: data.genomeSequence || "",
               proteinMutationProbs: data.protein_mutation_probs || {},
             },
@@ -448,7 +533,7 @@ const CompareModels = ({
   const modelNames = models.map((m) => (m.startsWith("uploaded:") ? m.replace("uploaded:", "") : m));
   const allDone = modelNames.every((n) => !loading[n]);
   const anyLoading = modelNames.some((n) => loading[n]);
-  const loadedModels = modelNames.filter((n) => predictions[n]?.genomeDataRaw);
+  const loadedModels = modelNames.filter((n) => predictions[n]?.genomeDataRaw || predictions[n]?.predictionPayload);
 
   return (
     <div className={embedded ? "bg-[#f6f7f9]" : "min-h-screen bg-[#f6f7f9]"}>
@@ -687,7 +772,13 @@ const CompareModels = ({
               </button>
             </div>
             <div className="px-1">
-              <RangeSlider value={viewRange} onChange={setViewRange} />
+              <RangeSlider
+                value={viewRange}
+                onChange={(updater) => {
+                  zoomSourceRef.current = null;
+                  setViewRange(updater);
+                }}
+              />
             </div>
             <div className="flex justify-between text-[10px] text-gray-400 font-mono mt-1 px-1">
               <span>1</span>
@@ -742,6 +833,10 @@ const CompareModels = ({
                         onZoomSync={zoomSyncEnabled ? handleChartZoom(modelId) : undefined}
                         syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
                       />
+                    ) : pred?.predictionPayload ? (
+                      <div style={{ height: 300, padding: "12px 4px" }}>
+                        <ScalarLineChart payload={pred.predictionPayload} color={mc.border} />
+                      </div>
                     ) : error ? (
                       <div className="py-12 text-center text-red-400 text-sm">{error}</div>
                     ) : null}
@@ -799,6 +894,10 @@ const CompareModels = ({
                         onZoomSync={zoomSyncEnabled ? handleChartZoom(modelId) : undefined}
                         syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
                       />
+                    ) : pred?.predictionPayload ? (
+                      <div style={{ height: 300, padding: "12px 4px" }}>
+                        <ScalarLineChart payload={pred.predictionPayload} color={mc.border} />
+                      </div>
                     ) : error ? (
                       <div className="py-12 text-center text-red-400 text-sm">{error}</div>
                     ) : null}

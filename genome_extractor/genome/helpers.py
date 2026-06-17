@@ -93,17 +93,15 @@ def predict_mutations(
     model_wrapper = None,
     feature_extractor = None,
     **custom_params
-) -> np.ndarray:
-    """
-    Predicts mutation probabilities using the Protocol-based flow:
-    feature_extractor.extract_features() → model_wrapper.preprocess() → predict() → postprocess()
+) -> dict:
+    """Run the full prediction pipeline and return a v2.0 PredictionPayload.
 
-    DefaultCovMutExFeatureExtractor generates (N*4, 205) features (4 per position),
-    and CovMutExKerasModel.postprocess() reshapes output to (N, 4) [A, T, G, C].
-    Custom extractors may return any shape; nucleotides_per_position defaults to 1.
+    Flow:
+        feature_extractor.extract_features() →
+        model_wrapper.preprocess() → predict() → postprocess(context)
 
     Returns:
-        numpy array of predictions
+        Self-describing PredictionPayload dict (see covmutex_models.validate_prediction_payload).
     """
     metadata = model_wrapper.metadata()
     print(f"Using model: {metadata['name']}")
@@ -144,11 +142,23 @@ def predict_mutations(
 
     raw_predictions = model_wrapper.predict(preprocessed)
 
-    # DefaultCovMutExFeatureExtractor ürettiği 4-per-position feature'ları (N*4, 205) → (N, 4) reshape
     npp = getattr(feature_extractor, 'nucleotides_per_position', 1)
-    results = model_wrapper.postprocess(raw_predictions, nucleotides_per_position=npp)
+    context = {
+        "nucleotides_per_position": npp,
+        "reference_length": len(genome_seq.rstrip("N")) if genome_seq else None,
+    }
+    if protein_regions:
+        only_region = next(iter(protein_regions.values()), None)
+        if only_region:
+            # protein_regions entries are 1-based INCLUSIVE [start, end]; the
+            # feature extractor emits (end - start + 1) positions starting at
+            # `start`. domain.region is half-open, so end must be exclusive
+            # (end + 1) for region_len to match the number of predicted values.
+            context["region"] = {
+                "start": int(only_region[0]),
+                "end": int(only_region[1]) + 1,
+            }
 
+    payload = model_wrapper.postprocess(raw_predictions, context=context)
     print(f"Prediction time: {time.time() - predict_time:.2f}s")
-    print(f"Prediction shape: {results['shape']}")
-
-    return results['predictions']
+    return payload
