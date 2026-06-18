@@ -71,7 +71,7 @@ export default function PayloadRenderer({ scaleType }) {
     const doughnutData = !selectedProteinRegion
       ? aggregateValuesByRegion(alignedValues, proteinRegionsAnn)
       : {};
-    const hasDoughnutData = Object.keys(doughnutData).length > 1;
+    const hasDoughnutData = Object.keys(doughnutData).length > 0;
 
     const chartMode = kind === "binary_per_position" ? "binary" : "scalar";
     return (

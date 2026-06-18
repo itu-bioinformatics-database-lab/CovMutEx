@@ -460,12 +460,13 @@ const UploadModel = () => {
                   {/* Model File */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Model File (.keras, .h5, .pt) *
+                      Model File *
+                      <span className="ml-1 text-xs text-gray-400 font-normal">.pt .pth .keras .h5 .onnx</span>
                     </label>
                     <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-green-400 transition-colors cursor-pointer">
                       <input
                         type="file"
-                        accept=".keras,.h5,.pt,.pth"
+                        accept=".keras,.h5,.pt,.pth,.onnx,.bin,.safetensors"
                         onChange={(e) => setModelFile(e.target.files[0])}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         required={activeTab === "upload"}

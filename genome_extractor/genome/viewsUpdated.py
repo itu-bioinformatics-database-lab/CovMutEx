@@ -470,11 +470,11 @@ def run_prediction(context: PredictionContext, request) -> Dict[str, Any]:
         "extractor_metadata": extractor_metadata,
         "saved_folder": context.bundle.saved_folder,
         "custom_parameters": context.custom_parameters or None,
+        "proteinRegionPossibilities": organism_protein_regions,
     }
     if legacy_genome_data is not None:
         response["genomeData"] = legacy_genome_data
         response["protein_mutation_probs"] = legacy_protein_probs
-        response["proteinRegionPossibilities"] = organism_protein_regions
 
     measure_time("total_request_handling_internal", start_time)
     return response

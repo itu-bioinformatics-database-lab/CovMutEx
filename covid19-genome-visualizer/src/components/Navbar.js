@@ -41,6 +41,7 @@ const customStyles = {
     boxShadow: state.isFocused ? "0 0 0 1px #3B82F6" : "none",
     "&:hover": { borderColor: "#3B82F6" },
   }),
+  menuPortal: (provided) => ({ ...provided, zIndex: 9999 }),
 };
 
 // ============================================
@@ -350,7 +351,7 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             {/* Model File */}
             <div>
               <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
-                Model File (.keras/.h5/.pt/.pth/.bin) *
+                Model File (.keras/.h5/.pt/.pth) *
               </label>
               <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-blue-400 transition-colors">
                 <input
@@ -948,7 +949,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
         <img
           src={logo}
           alt="CovMutEx Logo"
-          className="w-[18rem] h-[9rem] sm:w-64 sm:h-[9rem] md:w-80 md:h-[10rem] lg:w-[22rem] lg:h-[14rem] xl:w-[32rem] xl:h-[20rem] object-contain drop-shadow-sm"
+          className="w-[14rem] h-[7rem] sm:w-52 sm:h-[7rem] md:w-64 md:h-[8rem] lg:w-[18rem] lg:h-[11rem] xl:w-[26rem] xl:h-[16rem] object-contain drop-shadow-sm"
         />
       </div>
 
@@ -1000,6 +1001,8 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 onChange={(opt) => setSelectedModel(opt.value)}
                 value={combinedModelList.find((o) => o.value === selectedModel)}
                 styles={customStyles}
+                menuPortalTarget={document.body}
+                menuPosition="fixed"
                 placeholder="Choose a model..."
                 formatOptionLabel={(option) => {
                   // Pick a badge color per organism so the dropdown signals
@@ -1049,6 +1052,8 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                   Influenza HA Strain *
                 </label>
                 <Select
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
                   options={influenzaVariants.map((v) => ({
                     label: `${v.display_name}${v.year ? ` — ${v.year}` : ""}${
                       v.accession ? ` (${v.accession})` : ""
@@ -1138,6 +1143,8 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 ]}
                 onChange={handleProteinRegionChange}
                 styles={customStyles}
+                menuPortalTarget={document.body}
+                menuPosition="fixed"
                 placeholder="Optional — defaults to whole genome"
                 isClearable
               />
