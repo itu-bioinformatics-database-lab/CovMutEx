@@ -65,7 +65,7 @@ const Nav = () => {
             <img
               src={logo}
               alt="CovMutEx"
-              className="h-9 w-auto object-contain group-hover:scale-105 transition-transform"
+              className="h-7 w-auto object-contain group-hover:scale-105 transition-transform"
             />
             <div className="hidden sm:block">
               <span className="text-lg font-bold bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">

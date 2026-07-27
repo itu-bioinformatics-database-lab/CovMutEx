@@ -13,8 +13,7 @@ import {
 
 // Components
 import Navbar from "./components/Navbar";
-import GenomeChart from "./components/Recharts";
-import DoughnutChart from "./components/DoughnutChart";
+import PayloadRenderer from "./components/PayloadRenderer";
 import Error from "./components/Error";
 import Contact from "./components/Contact";
 import Nav from "./components/Nav";
@@ -32,16 +31,17 @@ function App() {
   const location = useLocation();
 
   // --- REDUX SELECTORS ---
+  // Visualization is delegated to <PayloadRenderer/>, which reads the v2.0
+  // predictionPayload (and legacy fields) directly from the store. We only
+  // need a tiny slice here for the page-level guards.
   const {
-    genomeDataRaw,                    // [4][N] format for GenomeChart
     dataset: genomeData,              // [{mutationPoss}] format for BarChart
-    genome: genomeSequence,
-    proteinMutationProbs: protein_mutation_probs,
-    selectedProteinRegion,
     isSelected,
     loading,
   } = useSelector((state) => state.genome);
 
+  // Linear / logarithmic toggle applies only to the categorical ATGC chart.
+  // PayloadRenderer forwards it to GenomeChart; non-categorical tracks ignore.
   const [scaleType, setScaleType] = useState("logarithmic");
 
   // --- INITIAL DATA LOADING ---
@@ -77,6 +77,7 @@ function App() {
       selectedProteinRegion: inputParams?.selectedProteinRegion || null,
       isNewUpload: false,
       customParameters: inputParams?.customParameters || {},
+      variant: inputParams?.variant || undefined,
     };
 
     try {
@@ -91,16 +92,16 @@ function App() {
   return (
     <div className="overflow-y-hidden min-h-screen flex flex-col">
       <Nav />
-      
+
       <Routes>
         {/* ANA SAYFA (Input Formu) */}
         <Route
           exact
           path="/"
           element={
-            <Navbar 
-              onNodeSelect={() => {}} 
-              onSubmit={handleNavbarSubmit} 
+            <Navbar
+              onNodeSelect={() => {}}
+              onSubmit={handleNavbarSubmit}
               isLoading={loading}
             />
           }
@@ -115,7 +116,7 @@ function App() {
         {/* BENCHMARK / COMPARISON SAYFASI */}
         <Route path="/benchmark" element={<BenchmarkDashboard />} />
 
-        {/* VISUALIZATION SAYFASI */}
+        {/* VISUAL COMPARE SAYFASI */}
         <Route path="/compare" element={<CompareModels />} />
 
         {/* SONUÇ GÖRSELLEŞTİRME SAYFASI */}
@@ -172,21 +173,8 @@ function App() {
                 </div>
               )}
 
-              {/* CHARTS */}
-              <div className="block">
-                {genomeDataRaw && genomeDataRaw.length > 0 && (
-                  <GenomeChart
-                    genomeData={genomeDataRaw}
-                    genomeSequence={genomeSequence}
-                    scaleType={scaleType}
-                  />
-                )}
-              </div>
-              {!selectedProteinRegion && protein_mutation_probs && (
-                <div className="flex justify-center py-6">
-                  <DoughnutChart data={protein_mutation_probs} />
-                </div>
-              )}
+              {/* CHARTS — dispatched by task.kind in the v2.0 PredictionPayload */}
+              <PayloadRenderer scaleType={scaleType} />
             </div>
           }
         />

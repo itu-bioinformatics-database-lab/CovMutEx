@@ -1,10 +1,16 @@
 import json
 import os
 import time
+import threading
 import h5py
 import hashlib
 import numpy as np
 import pandas as pd
+
+# Serialize all h5py cache reads/writes within a single Django process.
+# The development server is multi-threaded; two concurrent /predict/ requests
+# can race on create_group() and raise "Unable to create group (name already exists)".
+_node_cache_lock = threading.Lock()
 from .configs import configs
 from .cache_paths import (
     CACHE_DIR,
@@ -656,6 +662,30 @@ def cache_node_atgc_features(
     raw_cache_key = _node_raw_cache_key(node_id=node_id, k=k)
     request_cache_key = _node_request_cache_key(elapsed_day=elapsed_day, depth=depth)
 
+    with _node_cache_lock:
+        return _cache_node_atgc_features_locked(
+            cache_path=cache_path,
+            raw_cache_key=raw_cache_key,
+            request_cache_key=request_cache_key,
+            variant_md5=variant_md5,
+            node_id=node_id,
+            genome_seq=genome_seq,
+            mutations=mutations,
+            codon_mapper=codon_mapper,
+            cfg=cfg,
+            elapsed_day=elapsed_day,
+            depth=depth,
+            protein_regions=protein_regions,
+            k=k,
+        )
+
+
+def _cache_node_atgc_features_locked(
+    cache_path, raw_cache_key, request_cache_key, variant_md5,
+    node_id, genome_seq, mutations, codon_mapper, cfg,
+    elapsed_day, depth, protein_regions, k,
+):
+    """Inner implementation — must only be called while _node_cache_lock is held."""
     with h5py.File(cache_path, "a") as hdf:
         if raw_cache_key in hdf:
             group = hdf[raw_cache_key]

@@ -845,6 +845,8 @@ def run_benchmark(
                 selected_protein_region=selected_protein_region,
                 custom_parameters=config.get('custom_parameters', {}),
                 extractor_path=config.get('extractor_path'),
+                adapter_path=config.get('adapter_path'),
+                base_dir=config.get('bundle_dir'),
             )
             
             end_time = time.time()

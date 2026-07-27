@@ -1,6 +1,6 @@
 from django.urls import path
 from . import viewsUpdated as views
-from .viewsUpdated import predict_genome, home, get_model_parameters, get_models
+from .viewsUpdated import predict_genome, home, get_model_parameters, get_models, get_organisms
 # , delete_model
 from .benchmark_views import (
     run_benchmark_view, run_dataset_benchmark_view,
@@ -13,6 +13,7 @@ urlpatterns = [
     # Existing endpoints
     path('api/predict/', predict_genome, name='predict_genome'),
     path('api/models/', get_models, name='get_models'),
+    path('api/organisms/', get_organisms, name='get_organisms'),
     path('api/model-parameters/', get_model_parameters, name='get_model_parameters'),
     # path('api/model_parameters/', get_model_parameters, name='get_model_parameters_alt'),
     # path('api/models/delete/', delete_model, name='delete_model'),

@@ -714,9 +714,18 @@ const BenchmarkDashboard = () => {
       .map(([k]) => k);
   }, [results]);
 
-  const proteinRegionOptions = [
-    "ORF1ab", "S", "ORF3a", "E", "M", "ORF6", "ORF7a", "ORF7b", "ORF8", "N", "ORF10"
-  ];
+  // Protein region options: use per_protein keys from results when available
+  // (organism-aware), otherwise fall back to the built-in COVID list.
+  const COVID_PROTEIN_REGIONS = ["ORF1ab", "S", "ORF3a", "E", "M", "ORF6", "ORF7a", "ORF7b", "ORF8", "N", "ORF10"];
+  const proteinRegionOptions = useMemo(() => {
+    if (!results) return COVID_PROTEIN_REGIONS;
+    const models = results.type === "dataset"
+      ? Object.values(results.per_variant?.[0]?.models || {})
+      : Object.values(results.models || {});
+    const firstWithRegions = models.find((m) => m.per_protein && Object.keys(m.per_protein).length > 0);
+    if (firstWithRegions) return Object.keys(firstWithRegions.per_protein);
+    return COVID_PROTEIN_REGIONS;
+  }, [results]);
 
   // Helper: get summary for best model highlighting
   const getBestIdx = (metricKey, higher) => {

@@ -8,6 +8,7 @@ import { proteinRegionColorMap } from "../utils/proteinRegionColorMap";
 const API_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 const GENOME_LENGTH = 29903;
 
+
 const MODEL_COLORS = [
   { border: "#2563EB", bg: "rgba(37, 99, 235, 0.15)", label: "#1D4ED8", line: "rgba(37, 99, 235, 0.8)" },
   { border: "#DC2626", bg: "rgba(220, 38, 38, 0.15)", label: "#B91C1C", line: "rgba(220, 38, 38, 0.8)" },
@@ -409,7 +410,13 @@ const CompareModels = ({
         if (res.ok) {
           const data = await res.json();
           let genomeDataRaw = null;
+          let chartMode = "categorical";
+
+          const payload = data.predictionPayload || null;
+          const taskKind = payload?.task?.kind ?? null;
+
           if (data.genomeData) {
+            // Categorical model — legacy ATGC format from backend
             const gd = data.genomeData;
             if (Array.isArray(gd) && Array.isArray(gd[0]) && typeof gd[0][0] === "number") {
               genomeDataRaw = gd;
@@ -423,11 +430,50 @@ const CompareModels = ({
             } else if (Array.isArray(gd) && typeof gd[0] === "number") {
               genomeDataRaw = [gd, gd, gd, gd];
             }
+          } else if (
+            (taskKind === "binary_per_position" || taskKind === "scalar_per_position") &&
+            Array.isArray(payload?.predictions?.values)
+          ) {
+            // Binary / scalar — mirror PayloadRenderer's single-channel wrapping
+            // so GenomeChart renders with its full chrome (sidebar, zoom, log scale).
+            const values = payload.predictions.values;
+            const region = payload.domain?.region;
+            const totalLength = payload.domain?.total_length || values.length;
+            let alignedValues = values;
+            if (region && Number.isFinite(region.start) && Number.isFinite(region.end)) {
+              alignedValues = new Array(totalLength).fill(0);
+              const leadingZeros = Math.max(0, region.start - 1);
+              for (let i = 0; i < values.length && leadingZeros + i < totalLength; i += 1) {
+                alignedValues[leadingZeros + i] = values[i];
+              }
+            }
+            genomeDataRaw = [alignedValues];
+            chartMode = taskKind === "binary_per_position" ? "binary" : "scalar";
+
+            // Aggregate values per protein region — mirrors PayloadRenderer's
+            // aggregateValuesByRegion() so DoughnutChart works for binary/scalar too.
+            const proteinRegionsAnn = payload.annotations?.protein_regions ?? {};
+            const aggregated = {};
+            for (const [rgName, range] of Object.entries(proteinRegionsAnn)) {
+              if (!Array.isArray(range) || range.length < 2) continue;
+              const rStart = Math.max(0, range[0] - 1);
+              const rEnd = Math.min(alignedValues.length, range[1]);
+              if (rEnd <= rStart) continue;
+              let sum = 0;
+              for (let i = rStart; i < rEnd; i += 1) sum += Number(alignedValues[i]) || 0;
+              aggregated[rgName] = sum;
+            }
+            if (Object.keys(aggregated).length > 1) {
+              data.protein_mutation_probs = aggregated;
+            }
           }
+
           setPredictions((p) => ({
             ...p,
             [displayName]: {
               genomeDataRaw,
+              chartMode,
+              predictionPayload: payload,
               genomeSequence: data.genomeSequence || "",
               proteinMutationProbs: data.protein_mutation_probs || {},
             },
@@ -448,7 +494,7 @@ const CompareModels = ({
   const modelNames = models.map((m) => (m.startsWith("uploaded:") ? m.replace("uploaded:", "") : m));
   const allDone = modelNames.every((n) => !loading[n]);
   const anyLoading = modelNames.some((n) => loading[n]);
-  const loadedModels = modelNames.filter((n) => predictions[n]?.genomeDataRaw);
+  const loadedModels = modelNames.filter((n) => predictions[n]?.genomeDataRaw || predictions[n]?.predictionPayload);
 
   return (
     <div className={embedded ? "bg-[#f6f7f9]" : "min-h-screen bg-[#f6f7f9]"}>
@@ -687,7 +733,13 @@ const CompareModels = ({
               </button>
             </div>
             <div className="px-1">
-              <RangeSlider value={viewRange} onChange={setViewRange} />
+              <RangeSlider
+                value={viewRange}
+                onChange={(updater) => {
+                  zoomSourceRef.current = null;
+                  setViewRange(updater);
+                }}
+              />
             </div>
             <div className="flex justify-between text-[10px] text-gray-400 font-mono mt-1 px-1">
               <span>1</span>
@@ -738,6 +790,7 @@ const CompareModels = ({
                         key={`genome-chart-${modelId}`}
                         genomeData={pred.genomeDataRaw}
                         genomeSequence={pred.genomeSequence}
+                        mode={pred.chartMode || "categorical"}
                         hideSidebar={true}
                         onZoomSync={zoomSyncEnabled ? handleChartZoom(modelId) : undefined}
                         syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}
@@ -795,6 +848,7 @@ const CompareModels = ({
                         key={`genome-chart-side-${modelId}`}
                         genomeData={pred.genomeDataRaw}
                         genomeSequence={pred.genomeSequence}
+                        mode={pred.chartMode || "categorical"}
                         hideSidebar={true}
                         onZoomSync={zoomSyncEnabled ? handleChartZoom(modelId) : undefined}
                         syncZoomRange={zoomSyncEnabled && sharedZoomRange && zoomSourceRef.current !== modelId ? sharedZoomRange : undefined}

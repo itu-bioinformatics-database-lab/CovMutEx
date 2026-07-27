@@ -3,7 +3,12 @@ CovMutEx model contract.
 
 The runtime talks to every wrapped model through the same five methods:
 metadata(), input_schema(), preprocess(inputs), predict(batch), and
-postprocess(raw, nucleotides_per_position=1).
+postprocess(raw, context=None).
+
+postprocess() returns a self-describing PredictionPayload dict so that the
+runtime stays organism / task agnostic — the bundle declares its own task
+kind, genome length, region, and value semantics, and the frontend renders
+whatever it gets.
 """
 
 import os
@@ -11,7 +16,6 @@ import numpy as np
 import tensorflow as tf
 from typing import Protocol, Any, runtime_checkable, Optional
 
-# Try to import PyTorch (optional dependency)
 try:
     import torch
     PYTORCH_AVAILABLE = True
@@ -19,7 +23,6 @@ except ImportError:
     PYTORCH_AVAILABLE = False
     torch = None
 
-# Try to import joblib for sklearn models (optional dependency)
 try:
     import joblib
     JOBLIB_AVAILABLE = True
@@ -27,10 +30,124 @@ except ImportError:
     JOBLIB_AVAILABLE = False
     joblib = None
 
-# Module-level cache: model_path → model wrapper instance
-# Prevents reloading from disk on every request
 _model_cache: dict = {}
-MODEL_CONTRACT_VERSION = "1.0"
+MODEL_CONTRACT_VERSION = "2.0"
+
+ALLOWED_TASK_KINDS = (
+    "categorical_per_position",
+    "binary_per_position",
+    "scalar_per_position",
+)
+ALLOWED_VALUE_KINDS = ("probability", "logit", "score")
+ALLOWED_INDEXING = ("absolute", "relative_to_region")
+
+COVID_DEFAULT_LABELS = ["A", "T", "G", "C"]
+COVID_REFERENCE_LENGTH = 29903
+
+
+def validate_prediction_payload(payload: dict) -> None:
+    """Raise ValueError if payload does not satisfy the v2.0 contract."""
+    if not isinstance(payload, dict):
+        raise ValueError("PredictionPayload must be a dict")
+
+    task = payload.get("task")
+    if not isinstance(task, dict):
+        raise ValueError("PredictionPayload.task must be a dict")
+    kind = task.get("kind")
+    if kind not in ALLOWED_TASK_KINDS:
+        raise ValueError(
+            f"PredictionPayload.task.kind must be one of {ALLOWED_TASK_KINDS}, got {kind!r}"
+        )
+
+    domain = payload.get("domain")
+    if not isinstance(domain, dict):
+        raise ValueError("PredictionPayload.domain must be a dict")
+    total_length = domain.get("total_length")
+    if not isinstance(total_length, int) or total_length <= 0:
+        raise ValueError("PredictionPayload.domain.total_length must be a positive int")
+    region = domain.get("region")
+    if region is not None:
+        if not isinstance(region, dict) or "start" not in region or "end" not in region:
+            raise ValueError("PredictionPayload.domain.region must be {start, end} or null")
+        if not (0 <= region["start"] < region["end"] <= total_length):
+            raise ValueError(
+                "PredictionPayload.domain.region must satisfy 0 <= start < end <= total_length"
+            )
+
+    predictions = payload.get("predictions")
+    if not isinstance(predictions, dict):
+        raise ValueError("PredictionPayload.predictions must be a dict")
+    indexing = predictions.get("indexing", "absolute")
+    if indexing not in ALLOWED_INDEXING:
+        raise ValueError(
+            f"PredictionPayload.predictions.indexing must be one of {ALLOWED_INDEXING}"
+        )
+    value_kind = predictions.get("value_kind")
+    if value_kind not in ALLOWED_VALUE_KINDS:
+        raise ValueError(
+            f"PredictionPayload.predictions.value_kind must be one of {ALLOWED_VALUE_KINDS}"
+        )
+
+    values = predictions.get("values")
+    if values is None:
+        raise ValueError("PredictionPayload.predictions.values is required")
+    values_arr = np.asarray(values)
+    region_len = (region["end"] - region["start"]) if region else total_length
+
+    if kind == "categorical_per_position":
+        labels = task.get("labels")
+        if not isinstance(labels, list) or not labels:
+            raise ValueError("categorical_per_position requires task.labels (non-empty list)")
+        if values_arr.ndim != 2 or values_arr.shape != (region_len, len(labels)):
+            raise ValueError(
+                f"categorical values must have shape ({region_len}, {len(labels)}), "
+                f"got {values_arr.shape}"
+            )
+    elif kind in ("binary_per_position", "scalar_per_position"):
+        if values_arr.ndim != 1 or values_arr.shape != (region_len,):
+            raise ValueError(
+                f"{kind} values must have shape ({region_len},), got {values_arr.shape}"
+            )
+
+
+def wrap_predictions_as_payload(
+    predictions: np.ndarray,
+    *,
+    kind: str = "categorical_per_position",
+    labels: Optional[list] = None,
+    total_length: Optional[int] = None,
+    region: Optional[dict] = None,
+    value_kind: str = "probability",
+    value_range: Optional[list] = None,
+    indexing: str = "absolute",
+    annotations: Optional[dict] = None,
+) -> dict:
+    """Build a v2.0 PredictionPayload from a raw numpy predictions array.
+
+    Defaults match the legacy COVID-19 ATGC contract so built-in Keras models
+    work without per-call configuration.
+    """
+    predictions_arr = np.asarray(predictions)
+    inferred_length = predictions_arr.shape[0] if predictions_arr.ndim >= 1 else 0
+
+    payload = {
+        "contract_version": MODEL_CONTRACT_VERSION,
+        "task": {"kind": kind},
+        "domain": {
+            "total_length": int(total_length) if total_length else inferred_length,
+            "region": region,
+        },
+        "predictions": {
+            "indexing": indexing,
+            "values": predictions_arr.tolist(),
+            "value_kind": value_kind,
+            "value_range": value_range,
+        },
+        "annotations": annotations or {},
+    }
+    if kind == "categorical_per_position":
+        payload["task"]["labels"] = labels or COVID_DEFAULT_LABELS
+    return payload
 
 
 @runtime_checkable
@@ -100,13 +217,20 @@ class CovMutExModel(Protocol):
         """
         ...
     
-    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
+    def postprocess(self, raw: Any, context: Optional[dict] = None) -> dict:
         """
-        Postprocess raw predictions.
-        
+        Postprocess raw predictions into a self-describing PredictionPayload.
+
         Args:
-            raw: Raw predictions from predict() method
-            nucleotides_per_position: When > 1, reshape flat output to (N, npp)
+            raw: Raw predictions from predict().
+            context: Optional runtime hints. Recognized keys:
+                - nucleotides_per_position: int (legacy reshape hint)
+                - reference_length: int (genome length for total_length)
+                - region: {"start": int, "end": int} (sub-region predictions)
+
+        Returns:
+            PredictionPayload dict conforming to v2.0 contract.
+            See validate_prediction_payload() for the schema.
         """
         ...
 
@@ -137,7 +261,6 @@ class CovMutExKerasModel:
         self.description = description or "COVID-19 mutation prediction model"
         self.source = source
         
-        # Keras modeli yüklemek için
         self.keras_model = tf.keras.models.load_model(model_path, compile=False)
 
         # çok girişli mi tek girişli mi olduğunu belirle
@@ -232,47 +355,39 @@ class CovMutExKerasModel:
         
         return predictions
     
-    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
+    def postprocess(self, raw: Any, context: Optional[dict] = None) -> dict:
         """
-        Postprocess Keras model predictions.
+        Postprocess Keras predictions into a v2.0 PredictionPayload.
 
-        Args:
-            raw: Raw predictions from predict()
-            nucleotides_per_position: When > 1 (e.g. 4 for A/T/G/C), reshape
-                (N * npp, 1) → (N, npp) so the caller receives one row per
-                genome position.  Default 1 keeps behaviour unchanged.
-
-        Returns:
-            dict with processed predictions and metadata
+        Built-in COVID Keras models default to the legacy ATGC contract:
+        kind=categorical_per_position, labels=[A,T,G,C], total_length=29903.
+        Callers can override via `context`.
         """
+        context = context or {}
+        npp = context.get("nucleotides_per_position", 4)
+        reference_length = context.get("reference_length", COVID_REFERENCE_LENGTH)
+        region = context.get("region")
+
         if not isinstance(raw, np.ndarray):
             raw = np.array(raw)
 
-        if nucleotides_per_position > 1:
-            # Flatten to 1-D first, then reshape to (num_positions, npp)
-            if raw.ndim == 2 and raw.shape[1] == 1:
-                prob_values = raw[:, 0]
-            elif raw.ndim == 2 and raw.shape[1] == 2:
-                prob_values = raw[:, 1]   # binary → class-1 probability
-            else:
-                prob_values = raw.ravel()
-            raw = prob_values.reshape(-1, nucleotides_per_position)
-
-        # değerlendirme için yorum ekle
-        if self._output_type == "single-output":
-            interpretation = "Single mutation probability per position"
-        elif self._output_type == "dual-output":
-            interpretation = "Column 0: P(no mutation), Column 1: P(mutation)"
+        if raw.ndim == 2 and raw.shape[1] == 1:
+            prob_values = raw[:, 0]
+        elif raw.ndim == 2 and raw.shape[1] == 2:
+            prob_values = raw[:, 1]
         else:
-            interpretation = "Multi-class probabilities per position"
+            prob_values = raw.ravel()
+        per_position = prob_values.reshape(-1, npp)
 
-        return {
-            "predictions": raw,
-            "shape": raw.shape,
-            "prediction_type": self._output_type,
-            "interpretation": interpretation,
-            "num_positions": raw.shape[0] if len(raw.shape) > 0 else 0
-        }
+        return wrap_predictions_as_payload(
+            per_position,
+            kind="categorical_per_position",
+            labels=COVID_DEFAULT_LABELS[:npp],
+            total_length=reference_length,
+            region=region,
+            value_kind="probability",
+            value_range=[0.0, 1.0],
+        )
 
 
 class CovMutExPyTorchModel:
@@ -305,7 +420,7 @@ class CovMutExPyTorchModel:
         
         # Load PyTorch model
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.torch_model = torch.load(model_path, map_location=self.device)
+        self.torch_model = torch.load(model_path, map_location=self.device, weights_only=False)
         
         # Set to evaluation mode
         if hasattr(self.torch_model, 'eval'):
@@ -426,44 +541,38 @@ class CovMutExPyTorchModel:
         
         return predictions
     
-    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
+    def postprocess(self, raw: Any, context: Optional[dict] = None) -> dict:
+        """Postprocess PyTorch predictions into a v2.0 PredictionPayload.
+
+        Generic wrapper falls back to the legacy COVID ATGC contract; bundles
+        with non-COVID models should ship a model_adapter.py that overrides
+        this with their own task kind, labels, total_length, and region.
         """
-        Postprocess PyTorch model predictions.
-        
-        Args:
-            raw: Raw predictions from predict()
-            nucleotides_per_position: When > 1, reshape flat output to (N, npp)
-            
-        Returns:
-            dict with processed predictions and metadata
-        """
+        context = context or {}
+        npp = context.get("nucleotides_per_position", 4)
+        reference_length = context.get("reference_length", COVID_REFERENCE_LENGTH)
+        region = context.get("region")
+
         if not isinstance(raw, np.ndarray):
             raw = np.array(raw)
-        
-        if nucleotides_per_position > 1:
-            if raw.ndim == 2 and raw.shape[1] == 1:
-                prob_values = raw[:, 0]
-            elif raw.ndim == 2 and raw.shape[1] == 2:
-                prob_values = raw[:, 1]
-            else:
-                prob_values = raw.ravel()
-            raw = prob_values.reshape(-1, nucleotides_per_position)
 
-        # Determine interpretation based on output type
-        if self._output_type == "single-output":
-            interpretation = "Single mutation probability per position"
-        elif self._output_type == "dual-output":
-            interpretation = "Column 0: P(no mutation), Column 1: P(mutation)"
+        if raw.ndim == 2 and raw.shape[1] == 1:
+            prob_values = raw[:, 0]
+        elif raw.ndim == 2 and raw.shape[1] == 2:
+            prob_values = raw[:, 1]
         else:
-            interpretation = "Multi-class probabilities per position"
-        
-        return {
-            "predictions": raw,
-            "shape": raw.shape,
-            "prediction_type": self._output_type,
-            "interpretation": interpretation,
-            "num_positions": raw.shape[0] if len(raw.shape) > 0 else 0
-        }
+            prob_values = raw.ravel()
+        per_position = prob_values.reshape(-1, npp)
+
+        return wrap_predictions_as_payload(
+            per_position,
+            kind="categorical_per_position",
+            labels=COVID_DEFAULT_LABELS[:npp],
+            total_length=reference_length,
+            region=region,
+            value_kind="probability",
+            value_range=[0.0, 1.0],
+        )
 
 
 class CovMutExSklearnModel:
@@ -632,30 +741,45 @@ class CovMutExSklearnModel:
         
         return predictions
     
-    def postprocess(self, raw: Any, nucleotides_per_position: int = 1) -> dict:
+    def postprocess(self, raw: Any, context: Optional[dict] = None) -> dict:
+        """Postprocess Sklearn predictions into a v2.0 PredictionPayload.
+
+        Sklearn models are typically scalar-per-position (mutation propensity
+        per genome index). Defaults to scalar_per_position with the bundle's
+        declared genome_length when available.
         """
-        Postprocess Sklearn model predictions.
-        
-        Args:
-            raw: Raw predictions from predict()
-            nucleotides_per_position: When > 1, reshape flat output to (N, npp)
-            
-        Returns:
-            dict with processed predictions and metadata
-        """
+        context = context or {}
+        npp = context.get("nucleotides_per_position", 1)
+        reference_length = context.get(
+            "reference_length",
+            self.genome_length if self.genome_length else None,
+        )
+        region = context.get("region")
+
         if not isinstance(raw, np.ndarray):
             raw = np.array(raw)
 
-        if nucleotides_per_position > 1:
-            raw = raw.ravel().reshape(-1, nucleotides_per_position)
-        
-        return {
-            "predictions": raw,
-            "shape": raw.shape,
-            "prediction_type": self._output_type,
-            "interpretation": "Encoded sequence prediction (requires decoding)",
-            "num_positions": raw.shape[0] if len(raw.shape) > 0 else 0
-        }
+        if npp > 1:
+            values = raw.ravel().reshape(-1, npp)
+            return wrap_predictions_as_payload(
+                values,
+                kind="categorical_per_position",
+                labels=COVID_DEFAULT_LABELS[:npp],
+                total_length=reference_length,
+                region=region,
+                value_kind="probability",
+                value_range=[0.0, 1.0],
+            )
+
+        values = raw.ravel()
+        return wrap_predictions_as_payload(
+            values,
+            kind="scalar_per_position",
+            total_length=reference_length,
+            region=region,
+            value_kind="probability",
+            value_range=[0.0, 1.0],
+        )
 
 
 def load_model(model_path: str, model_name: Optional[str] = None, description: Optional[str] = None, source: str = "server"):

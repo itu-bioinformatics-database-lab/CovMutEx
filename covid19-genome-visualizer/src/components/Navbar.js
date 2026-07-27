@@ -41,6 +41,7 @@ const customStyles = {
     boxShadow: state.isFocused ? "0 0 0 1px #3B82F6" : "none",
     "&:hover": { borderColor: "#3B82F6" },
   }),
+  menuPortal: (provided) => ({ ...provided, zIndex: 9999 }),
 };
 
 // ============================================
@@ -64,7 +65,14 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
   const [name, setName] = useState("");
   const [modelFile, setModelFile] = useState(null);
   const [extractorFile, setExtractorFile] = useState(null);
+  const [adapterFile, setAdapterFile] = useState(null);
   const [helperFiles, setHelperFiles] = useState([]);
+  const [organism, setOrganism] = useState("covid");
+  // Custom-organism uploads. The user drops the actual files; the backend
+  // stores them under canonical names (genome.fasta / protein_regions.csv), so
+  // there's no fragile "typed name must match a helper file" step.
+  const [genomeUpload, setGenomeUpload] = useState(null);
+  const [proteinRegionsUpload, setProteinRegionsUpload] = useState(null);
   const [paramsList, setParamsList] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -92,15 +100,29 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
 
   const handleHelperFilesChange = (e) => {
     if (e.target.files) {
-      setHelperFiles(Array.from(e.target.files));
+      const incoming = Array.from(e.target.files);
+      setHelperFiles((prev) => {
+        const existingNames = new Set(prev.map((f) => f.name));
+        const deduped = incoming.filter((f) => !existingNames.has(f.name));
+        return [...prev, ...deduped];
+      });
+      e.target.value = "";
     }
+  };
+
+  const removeHelperFile = (name) => {
+    setHelperFiles((prev) => prev.filter((f) => f.name !== name));
   };
 
   const resetForm = () => {
     setName("");
     setModelFile(null);
     setExtractorFile(null);
+    setAdapterFile(null);
     setHelperFiles([]);
+    setOrganism("covid");
+    setGenomeUpload(null);
+    setProteinRegionsUpload(null);
     setParamsList([]);
     setError("");
   };
@@ -111,6 +133,11 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
 
     if (!modelFile || !name.trim()) {
       setError("Please fill required fields (Name, Model File).");
+      return;
+    }
+
+    if (organism === "custom" && !genomeUpload) {
+      setError("For a custom organism, drop your genome file (FASTA) into the Genome slot.");
       return;
     }
 
@@ -128,9 +155,22 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
       formData.append("nodeId", "USA/UT-UPHL-210820924226/2021|OK040008.1|2021-08-07");
       formData.append("elapsedDay", "60");
 
-      // Optional extractor
+      // Optional extractor + adapter
       if (extractorFile) {
         formData.append("extractorFile", extractorFile);
+      }
+      if (adapterFile) {
+        formData.append("adapterFile", adapterFile);
+      }
+
+      // Organism dispatch — written into bundle_metadata.json server-side.
+      // For custom organisms we send the actual files; the backend stores them
+      // under canonical names and records those names in the metadata.
+      formData.append("organism", organism);
+      if (organism === "custom") {
+        if (genomeUpload) formData.append("genomeFile", genomeUpload);
+        if (proteinRegionsUpload)
+          formData.append("proteinRegionsFile", proteinRegionsUpload);
       }
 
       // Helper files
@@ -224,17 +264,98 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             />
           </div>
 
+          {/* Organism selector */}
+          <div className="bg-indigo-50/60 border border-indigo-100 rounded-lg p-3 space-y-3">
+            <div>
+              <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
+                Target Organism
+              </label>
+              <select
+                value={organism}
+                onChange={(e) => setOrganism(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="covid">SARS-CoV-2 (built-in)</option>
+                <option value="influenza">Influenza A — HA Segment (built-in)</option>
+                <option value="custom">Other — I'll upload my own genome</option>
+              </select>
+              <p className="text-[11px] text-gray-500 mt-1 leading-snug">
+                Built-in organisms use our reference genome &amp; protein regions — no genome
+                upload needed. Choose <span className="font-medium">Other</span> to predict on a
+                virus we don't ship.
+              </p>
+            </div>
+
+            {organism === "custom" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Genome file drop slot */}
+                <div>
+                  <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
+                    Genome File (FASTA) *
+                  </label>
+                  <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-3 hover:border-indigo-400 transition-colors">
+                    <input
+                      type="file"
+                      accept=".fasta,.fa,.txt"
+                      onChange={(e) => setGenomeUpload(e.target.files[0] || null)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div className="text-center">
+                      <MdCloudUpload className="mx-auto text-gray-400 text-xl mb-1" />
+                      <p className="text-[11px] text-gray-500 break-all">
+                        {genomeUpload ? (
+                          <span className="text-indigo-600 font-medium">{genomeUpload.name}</span>
+                        ) : (
+                          "Drop genome"
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {/* Protein-regions file drop slot */}
+                <div>
+                  <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
+                    Protein Regions (CSV)
+                  </label>
+                  <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-3 hover:border-indigo-400 transition-colors">
+                    <input
+                      type="file"
+                      accept=".csv"
+                      onChange={(e) => setProteinRegionsUpload(e.target.files[0] || null)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div className="text-center">
+                      <MdCloudUpload className="mx-auto text-gray-400 text-xl mb-1" />
+                      <p className="text-[11px] text-gray-500 break-all">
+                        {proteinRegionsUpload ? (
+                          <span className="text-indigo-600 font-medium">{proteinRegionsUpload.name}</span>
+                        ) : (
+                          "Optional"
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-500 md:col-span-2 leading-snug">
+                  We store these under fixed names (<span className="font-mono">genome.fasta</span>,{" "}
+                  <span className="font-mono">protein_regions.csv</span>) in your bundle, next to the
+                  model &amp; feature extractor. Protein-regions CSV format:{" "}
+                  <span className="font-mono">name,start,end</span> (1-based inclusive), one per line.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* File Uploads */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Model File */}
             <div>
               <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
-                Model File (.keras/.h5) *
+                Model File (.keras/.h5/.pt/.pth) *
               </label>
               <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-blue-400 transition-colors">
                 <input
                   type="file"
-                  accept=".keras,.h5,.pt,.pth"
                   onChange={(e) => setModelFile(e.target.files[0])}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   required
@@ -278,21 +399,77 @@ const UploadModal = ({ isOpen, onClose, onSuccess }) => {
             </div>
           </div>
 
+          {/* Model Adapter File — postprocess output to a different payload shape */}
+          <div>
+            <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
+              Model Adapter (.py)
+            </label>
+            <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-purple-400 transition-colors">
+              <input
+                type="file"
+                accept=".py"
+                onChange={(e) => setAdapterFile(e.target.files[0])}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div className="text-center">
+                <MdSettings className="mx-auto text-gray-400 text-2xl mb-1" />
+                <p className="text-xs text-gray-500">
+                  {adapterFile ? (
+                    <span className="text-purple-600 font-medium">{adapterFile.name}</span>
+                  ) : (
+                    "Optional — exposes preprocess / predict / postprocess to override the default Keras model wrapper"
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Helper Files */}
           <div>
             <label className="text-xs font-bold text-gray-700 uppercase mb-1 block">
               Helper Files (Optional)
             </label>
-            <input
-              type="file"
-              multiple
-              onChange={handleHelperFilesChange}
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-gray-50 file:text-gray-700 hover:file:bg-gray-100"
-            />
-            {helperFiles.length > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
-                {helperFiles.length} file(s) selected
+            <div
+              className="relative border-2 border-dashed border-gray-300 rounded-lg p-3 hover:border-blue-400 transition-colors text-center"
+              onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("border-blue-400"); }}
+              onDragLeave={(e) => e.currentTarget.classList.remove("border-blue-400")}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove("border-blue-400");
+                const dropped = Array.from(e.dataTransfer.files);
+                if (dropped.length) {
+                  setHelperFiles((prev) => {
+                    const existingNames = new Set(prev.map((f) => f.name));
+                    return [...prev, ...dropped.filter((f) => !existingNames.has(f.name))];
+                  });
+                }
+              }}
+            >
+              <input
+                type="file"
+                multiple
+                onChange={handleHelperFilesChange}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <p className="text-xs text-gray-500 pointer-events-none">
+                Click or drag & drop files here
               </p>
+            </div>
+            {helperFiles.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {helperFiles.map((f) => (
+                  <li key={f.name} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2 py-1">
+                    <span className="text-gray-700 truncate mr-2">{f.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeHelperFile(f.name)}
+                      className="text-gray-400 hover:text-red-500 shrink-0"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
@@ -441,7 +618,69 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [modelParameters, setModelParameters] = useState([]);
   const [parametersLoading, setParametersLoading] = useState(false);
+  // Faz 1.6: organism-aware variant picker. The selected model's organism
+  // (covid / influenza / custom) decides which picker we render below the
+  // model dropdown. _variant is the influenza HA strain choice; nodeId
+  // (state above) stays the COVID isolate choice. Catalog comes from
+  // /api/organisms/.
+  const [_variant, setVariant] = useState("");
+  const [influenzaVariants, setInfluenzaVariants] = useState([]);
+  // modelName → organism, populated alongside combinedModelList so we can
+  // tag dropdown options and pick the right variant UI without an extra
+  // round-trip.
+  const [modelOrganismMap, setModelOrganismMap] = useState({});
+  // bundleName → {region: [start, end], ...}, for custom-organism uploads
+  // whose protein_regions.csv was shipped in the bundle.
+  const [modelProteinRegionsMap, setModelProteinRegionsMap] = useState({});
+  // Per-subtype influenza protein regions ({influenza_h1n1: {...}, ...}).
+  // Filled from GET /api/organisms/; used to swap the protein-region dropdown
+  // contents when the user picks a different HA variant.
+  const [influenzaProteinRegions, setInfluenzaProteinRegions] = useState({});
+  // COVID protein regions sourced from the backend organism registry,
+  // overriding the static src/data/proteinRegions.js when available.
+  const [covidProteinRegions, setCovidProteinRegions] = useState(null);
   const loading = isLoading || reduxLoading;
+
+  // Derive the selected model's organism for picker dispatch.
+  const selectedOrganism = (() => {
+    if (!selectedModel) return null;
+    const key = selectedModel.startsWith("uploaded:")
+      ? selectedModel.replace("uploaded:", "")
+      : selectedModel;
+    // Static (data/modelList.js) models all target COVID by convention.
+    return modelOrganismMap[key] || "covid";
+  })();
+
+  // Resolve the protein-region catalog that should populate the dropdown for
+  // the current selection. Three sources:
+  //   - covid: backend's organisms/covid/protein_regions.csv (fallback: static
+  //     src/data/proteinRegions.js so the picker still renders if /api/
+  //     organisms/ hasn't loaded yet)
+  //   - influenza: depends on the picked variant's subtype — swaps when the
+  //     user changes variant
+  //   - custom: ships with the bundle's protein_regions.csv (may be empty)
+  const activeProteinRegions = (() => {
+    if (selectedOrganism === "covid") {
+      return covidProteinRegions || proteinRegions;
+    }
+    if (selectedOrganism === "influenza") {
+      const variantEntry = influenzaVariants.find((v) => v.name === _variant);
+      const subtypeOrg = variantEntry?.organism;
+      return subtypeOrg ? (influenzaProteinRegions[subtypeOrg] || {}) : {};
+    }
+    if (selectedOrganism === "custom") {
+      const key = selectedModel.startsWith("uploaded:")
+        ? selectedModel.replace("uploaded:", "")
+        : selectedModel;
+      return modelProteinRegionsMap[key] || {};
+    }
+    return {};
+  })();
+
+  // Some organisms / models don't take an elapsed-day input. Only COVID's
+  // built-in extractor consumes it — for influenza and custom uploads we
+  // hide the field and send 0 server-side.
+  const showElapsedDay = selectedOrganism === "covid";
 
   // ============================================
   // FETCH MODELS ON MOUNT
@@ -459,15 +698,36 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
       if (response.ok) {
         const data = await response.json();
-        const uploadedModels = data.available_models || [];
+        const richModels = data.models || [];
+        // Build modelName → organism map so the variant picker can dispatch
+        // the moment the user changes their selection.
+        const orgMap = {};
+        const regionsMap = {};
+        richModels.forEach((m) => {
+          orgMap[m.name] = m.organism;
+          if (m.protein_regions) {
+            regionsMap[m.name] = m.protein_regions;
+          }
+        });
+        setModelOrganismMap(orgMap);
+        setModelProteinRegionsMap(regionsMap);
 
-        const formattedAPI = uploadedModels.map((m) => ({
-          label: `${m} (Uploaded)`,
-          value: `uploaded:${m}`,
-          type: "uploaded",
+        const formattedAPI = richModels
+          .filter((m) => m.uploaded)
+          .map((m) => ({
+            label: `${m.name} (Uploaded)`,
+            value: `uploaded:${m.name}`,
+            type: "uploaded",
+            organism: m.organism,
+          }));
+
+        // Tag static models too — they're all COVID by convention.
+        const formattedStaticTagged = formattedStatic.map((m) => ({
+          ...m,
+          organism: "covid",
         }));
 
-        const allModels = [...formattedStatic, ...formattedAPI];
+        const allModels = [...formattedStaticTagged, ...formattedAPI];
         setCombinedModelList(allModels);
 
         if (!selectedModel && allModels.length > 0) {
@@ -487,6 +747,31 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
       }
     }
   };
+
+  // Fetch the consolidated influenza variant catalog (9 strains across H1N1
+  // / H3N2 / H5N1). Only the prediction-screen variant picker uses it.
+  useEffect(() => {
+    fetch(`${API_URL}/api/organisms/`)
+      .then((response) => (response.ok ? response.json() : { influenza_variants: [] }))
+      .then((data) => {
+        setInfluenzaVariants(data.influenza_variants || []);
+        setInfluenzaProteinRegions(data.protein_regions_by_subtype || {});
+        if (data.covid_protein_regions) {
+          setCovidProteinRegions(data.covid_protein_regions);
+        }
+      })
+      .catch(() => {
+        setInfluenzaVariants([]);
+        setInfluenzaProteinRegions({});
+      });
+  }, []);
+
+  // Reset the variant when the selected model changes — variant catalog and
+  // nodeId are organism-scoped, so a stale selection from a previous model
+  // would silently corrupt the next prediction.
+  useEffect(() => {
+    setVariant("");
+  }, [selectedModel]);
 
   useEffect(() => {
     fetchModels();
@@ -583,12 +868,26 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!_nodeId || !selectedModel) {
-      alert("Please select a Variant ID and Model.");
+    if (!selectedModel) {
+      alert("Please select a Model.");
       return;
     }
 
-    if (!_elapsedDay || _elapsedDay === "0") {
+    // Organism-aware variant validation: each organism has its own picker
+    // (COVID = nodeId from mutations.txt, Influenza = HA strain from catalog,
+    // Custom = none, bundle ships its own genome).
+    if (selectedOrganism === "covid" && !_nodeId) {
+      alert("Please pick a COVID Variant ID.");
+      return;
+    }
+    if (selectedOrganism === "influenza" && !_variant) {
+      alert("Please pick an Influenza HA Strain (one of the 9 cataloged).");
+      return;
+    }
+
+    // Elapsed days is only a COVID-extractor feature. Influenza and custom
+    // organisms skip the field entirely (server treats it as 0).
+    if (showElapsedDay && (!_elapsedDay || _elapsedDay === "0")) {
       alert("Please enter Elapsed Days (must be greater than 0).");
       return;
     }
@@ -615,11 +914,15 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
 
     const params = {
       nodeId: _nodeId,
-      elapsedDay: Number(_elapsedDay) || 60,
+      elapsedDay: showElapsedDay ? (Number(_elapsedDay) || 60) : 0,
       selectedModel: selectedModel,
       selectedProteinRegion: selectedProteinRegion || null,
       isNewUpload: false,
       customParameters: customParamsObj,
+      // Influenza HA strain override — only sent for influenza models. The
+      // backend ignores it for COVID (uses nodeId) and custom (uses the
+      // bundle's own genome).
+      variant: selectedOrganism === "influenza" ? _variant : undefined,
     };
 
     try {
@@ -646,7 +949,7 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
         <img
           src={logo}
           alt="CovMutEx Logo"
-          className="w-[18rem] h-[9rem] sm:w-64 sm:h-[9rem] md:w-80 md:h-[10rem] lg:w-[22rem] lg:h-[14rem] xl:w-[32rem] xl:h-[20rem] object-contain drop-shadow-sm"
+          className="w-[14rem] h-[7rem] sm:w-52 sm:h-[7rem] md:w-64 md:h-[8rem] lg:w-[18rem] lg:h-[11rem] xl:w-[26rem] xl:h-[16rem] object-contain drop-shadow-sm"
         />
       </div>
 
@@ -698,48 +1001,134 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
                 onChange={(opt) => setSelectedModel(opt.value)}
                 value={combinedModelList.find((o) => o.value === selectedModel)}
                 styles={customStyles}
+                menuPortalTarget={document.body}
+                menuPosition="fixed"
                 placeholder="Choose a model..."
-                formatOptionLabel={(option) => (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">{option.label}</span>
-                    {option.type === "uploaded" && (
-                      <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded-full ml-2">
-                        Uploaded
+                formatOptionLabel={(option) => {
+                  // Pick a badge color per organism so the dropdown signals
+                  // at a glance what kind of variant picker comes next.
+                  const orgBadgeStyle = {
+                    covid: "bg-blue-100 text-blue-700",
+                    influenza: "bg-purple-100 text-purple-700",
+                    custom: "bg-orange-100 text-orange-700",
+                  }[option.organism] || "bg-gray-100 text-gray-700";
+                  const orgLabel = {
+                    covid: "COVID",
+                    influenza: "Influenza",
+                    custom: "Custom",
+                  }[option.organism] || (option.organism || "?");
+                  return (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">{option.label}</span>
+                      <span className="flex items-center gap-1 ml-2">
+                        {option.type === "uploaded" && (
+                          <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded-full">
+                            Uploaded
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${orgBadgeStyle}`}>
+                          {orgLabel}
+                        </span>
                       </span>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  );
+                }}
               />
             </div>
 
-            {/* Variant ID */}
-            <div>
-              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
-                Variant ID *
-              </label>
-              <DropDown items={nodes} setNodeId={setNodeId} />
-            </div>
+            {/* Variant picker — morphs by the selected model's organism. */}
+            {selectedOrganism === "covid" && (
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+                  COVID Variant ID *
+                </label>
+                <DropDown items={nodes} setNodeId={setNodeId} />
+              </div>
+            )}
 
-            {/* Elapsed Days */}
-            <div>
-              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
-                Elapsed Days *
-              </label>
-              <Input
-                type="number"
-                value={_elapsedDay}
-                onChange={(e) => setElapsedDay(e.target.value)}
-                min={1}
-                placeholder="e.g., 60"
-                required
-                className="!border !border-gray-300 dark:!border-gray-600 focus:!border-blue-500 dark:!bg-gray-800 dark:!text-gray-200"
-              />
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 ml-1">
-                Days since variant emergence (affects mutation probability)
-              </p>
-            </div>
+            {selectedOrganism === "influenza" && (
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">
+                  Influenza HA Strain *
+                </label>
+                <Select
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
+                  options={influenzaVariants.map((v) => ({
+                    label: `${v.display_name}${v.year ? ` — ${v.year}` : ""}${
+                      v.accession ? ` (${v.accession})` : ""
+                    }`,
+                    value: v.name,
+                    subtype: v.subtype,
+                    isReference: String(v.is_reference).toLowerCase() === "true",
+                  }))}
+                  onChange={(opt) => setVariant(opt ? opt.value : "")}
+                  value={
+                    influenzaVariants
+                      .map((v) => ({
+                        label: `${v.display_name}${v.year ? ` — ${v.year}` : ""}${
+                          v.accession ? ` (${v.accession})` : ""
+                        }`,
+                        value: v.name,
+                      }))
+                      .find((o) => o.value === _variant) || null
+                  }
+                  styles={customStyles}
+                  placeholder="Pick an HA strain (PR/8/34, Cal/07, cattle/Texas, ...)"
+                  formatOptionLabel={(option) => (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">{option.label}</span>
+                      <span className="flex items-center gap-1 ml-2">
+                        {option.subtype && (
+                          <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded-full">
+                            {option.subtype}
+                          </span>
+                        )}
+                        {option.isReference && (
+                          <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">
+                            Reference
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                />
+                <p className="text-xs text-gray-400 mt-1 ml-1">
+                  9 cataloged HA strains across H1N1 / H3N2 / H5N1, including the 2024 US dairy
+                  cattle isolate (clade 2.3.4.4b).
+                </p>
+              </div>
+            )}
 
-            {/* Region */}
+            {selectedOrganism === "custom" && (
+              <div className="rounded-xl bg-orange-50 border border-orange-100 p-3 text-xs text-orange-800">
+                This bundle ships its own genome and protein regions. No variant
+                selection is needed — predictions run on the genome the bundle uploaded.
+              </div>
+            )}
+
+            {/* Elapsed Days — COVID-only feature */}
+            {showElapsedDay && (
+              <div>
+                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
+                  Elapsed Days *
+                </label>
+                <Input
+                  type="number"
+                  value={_elapsedDay}
+                  onChange={(e) => setElapsedDay(e.target.value)}
+                  min={1}
+                  placeholder="e.g., 60"
+                  required
+                  className="!border !border-gray-300 dark:!border-gray-600 focus:!border-blue-500 dark:!bg-gray-800 dark:!text-gray-200"
+                />
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 ml-1">
+                  Days since variant emergence (affects mutation probability)
+                </p>
+              </div>
+            )}
+
+            {/* Region — populated from the selected model/variant's catalog */}
             <div>
               <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block ml-1">
                 Protein Region
@@ -747,13 +1136,15 @@ function Navbar({ onNodeSelect, onSubmit, isLoading }) {
               <Select
                 options={[
                   { label: "Whole Genome", value: "" },
-                  ...Object.keys(proteinRegions).map((pr) => ({
+                  ...Object.keys(activeProteinRegions).map((pr) => ({
                     label: pr,
                     value: pr,
                   })),
                 ]}
                 onChange={handleProteinRegionChange}
                 styles={customStyles}
+                menuPortalTarget={document.body}
+                menuPosition="fixed"
                 placeholder="Optional — defaults to whole genome"
                 isClearable
               />
